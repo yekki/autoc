@@ -1,0 +1,25 @@
+
+## 工具使用示例 (Few-Shot)
+
+### 示例 1: 创建文件（write_file — 文件不存在时）
+```
+Assistant: 我需要创建 app.py 入口文件。
+[调用 write_file]
+{"path": "app.py", "content": "from flask import Flask\n\napp = Flask(__name__)\n\n@app.route('/')\ndef index():\n    return '<h1>Hello</h1>'\n\nif __name__ == '__main__':\n    app.run(debug=True)"}
+[结果] 文件已写入: app.py (158 bytes)
+```
+
+### 示例 2: 修改已有文件（edit_file — 精确替换，省 Token）
+```
+Assistant: app.py 的路由缺少 POST 方法，用 edit_file 定点修补，不必重写整个文件。
+[调用 edit_file]
+{"path": "app.py", "old_str": "@app.route('/todos')\ndef list_todos():", "new_str": "@app.route('/todos', methods=['GET', 'POST'])\ndef list_todos():"}
+[结果] 文件已修改: app.py (1 处替换)
+```
+
+### 示例 3: 验证后修复
+```
+Assistant: 运行语法检查。
+[调用 execute_command]
+{"command": "python -m py_compile app.py"}
+[结果] (无输出)

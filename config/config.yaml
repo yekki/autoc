@@ -1,0 +1,106 @@
+llm:
+  preset: glm
+  base_url: ''
+  api_key: ''
+  model: glm-4.7
+  temperature: 0.7
+  max_tokens: 32768
+  timeout: 120
+  max_retries: 3
+  retry_base_delay: 2.0
+  extra_params: {}
+agents:
+  coder:
+    name: Coder Agent
+    description: 全栈实现者 - 代码生成、功能实现、依赖安装、Bug修复、验证
+    max_iterations: 50
+    preset: glm
+    model: glm-4.7
+  critique:
+    name: Critique Agent
+    description: 代码评审专家 - 4 维量化评分、代码级 issues
+    max_iterations: 8
+    preset: qwen
+    model: qwen3-max
+  helper:
+    name: 辅助 AI
+    description: 辅助功能 - 需求优化、技术栈推荐、Coder 咨询
+    preset: qwen
+    model: qwen-plus
+    timeout: 300
+    batch_size: 5
+mcp:
+  enabled: true
+  # 设计原则（对标 OpenHands）：MCP 仅用于内置工具无法覆盖的「外部能力扩展」。
+  # 文件操作（read/write/list/edit）由内置工具全权负责，禁止通过 MCP filesystem 重复暴露。
+  servers:
+  # filesystem MCP 已移除：AutoC 有完整内置文件工具（read_file/write_file/edit_file/list_files），
+  # filesystem MCP 仅带来工具 schema 冗余（~2000 tokens/次）和 /var symlink 路径 bug。
+  #
+  # browser MCP（按需启用）：仅 Web 项目需要浏览器验证时取消注释。
+  # - name: browser
+  #   command: npx
+  #   args:
+  #   - -y
+  #   - '@playwright/mcp@latest'
+  #   - --output-dir
+  #   - /tmp/autoc-screenshots
+  - name: context7
+    command: npx
+    args:
+    - -y
+    - '@upstash/context7-mcp'
+  strategy:
+    builtin_first: true
+refiner:
+  mode: auto
+  quality_threshold_high: 0.7
+  quality_threshold_low: 0.4
+orchestrator:
+  max_rounds: 3
+  auto_fix: true
+  enable_checkpoint: false
+  checkpoint_dir: .autoc_state
+  context_limit: 25000
+  # 以下为 OrchestrationLoop (loop.py) 预留配置，当前主流程未启用
+  # exit_detection:
+  #   completion_threshold: 2
+  #   require_exit_signal: true
+  #   max_consecutive_done: 2
+  # circuit_breaker:
+  #   no_progress_threshold: 3
+  #   same_error_threshold: 5
+  #   cooldown_minutes: 5
+  #   auto_reset: false
+  # rate_limit:
+  #   max_calls_per_hour: 100
+features:
+  git: true
+  sandbox_mode: project
+  sandbox_image: nikolaik/python-nodejs:python3.12-nodejs22
+  experience: true
+  experience_dir: .autoc_experience
+  code_quality: true
+  parallel: true
+  max_parallel_tasks: 3
+  progress_tracking: true
+  single_task: false
+  venv:
+    global_path: ~/.autoc/venv
+    project_venv: false
+workspace:
+  output_dir: ./workspace
+  clean_before_start: false
+  isolation_mode: multi
+  default_project_name: project-{date}-{random}
+preview:
+  enabled: true
+  auto_preview: auto
+  runtime: auto
+  open_browser: false
+  e2b_api_key: ''
+  e2b_template: ''
+logging:
+  level: INFO
+  file: ./logs/autoc.log
+  console: true

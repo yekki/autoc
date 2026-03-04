@@ -1,0 +1,45 @@
+name: Vanilla Web
+tags: [html, css, javascript, web, frontend, static, vanilla]
+
+structure: |
+  推荐目录结构:
+  index.html             # 主页面
+  css/
+    style.css            # 全局样式
+    reset.css            # CSS Reset (可选)
+  js/
+    main.js              # 主逻辑入口
+    utils.js             # 工具函数
+  assets/
+    images/              # 图片资源
+    fonts/               # 字体资源
+  README.md
+
+conventions: |
+  - HTML5 语义化标签: <header>, <nav>, <main>, <section>, <footer>
+  - CSS:
+    - 使用 CSS 变量管理主题色: :root { --primary: #3b82f6; }
+    - 移动优先响应式: 先写 mobile 样式，用 @media (min-width:) 扩展
+    - Flexbox / Grid 布局为主
+    - BEM 命名 (.block__element--modifier) 或简洁类名
+  - JavaScript:
+    - 使用 ES6+ 语法: const/let, 箭头函数, 模板字符串, 解构
+    - DOM 操作: document.querySelector() / addEventListener()
+    - 模块化: 使用 <script type="module"> 支持 import/export
+    - 不依赖 jQuery，原生 API 足够
+  - 可访问性: alt 属性, aria-label, 键盘导航支持
+  - 性能: 图片懒加载, CSS/JS 放置位置优化
+
+testing: |
+  - 简单项目: 浏览器打开 index.html 验证显示效果
+  - 用 Python http.server 启动本地预览:
+      python -m http.server 8000
+  - JavaScript 逻辑测试 (可选):
+    - 使用 Node.js 环境 + Jest 测试纯函数
+    - 或在 HTML 中嵌入简单断言脚本
+  - 验证方式:
+    - 文件存在且 HTML 语法正确
+    - 浏览器能正常渲染 (无控制台错误)
+    - 响应式布局在不同宽度下正常
+
+dependencies: {}

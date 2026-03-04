@@ -1,0 +1,10 @@
+name: 测试规范
+type: inline
+tags: [python, javascript, typescript, go]
+agent_roles: [main]
+priority: 60
+content: |
+  每个功能模块都要有对应的测试文件。
+  测试覆盖正常路径、边界条件和错误场景。
+  测试应独立运行，不依赖外部服务或网络。
+  使用 fixture 或 setup/teardown 管理测试状态。

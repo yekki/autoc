@@ -1,0 +1,11 @@
+name: Python 最佳实践
+type: inline
+tags: [python]
+agent_roles: [main]
+priority: 80
+content: |
+  使用 type hints 标注所有函数签名。
+  使用 pathlib 替代 os.path 处理文件路径。
+  异常处理要具体，不要 except Exception。
+  使用 dataclass 或 Pydantic 定义数据模型。
+  日志使用 logging 模块，不要 print。

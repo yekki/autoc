@@ -1,0 +1,83 @@
+# ===== 敏感信息（绝对不入库）=====
+.env
+*.key
+*.pem
+*.p12
+*.crt
+*.cert
+config/models.json
+
+# ===== Python =====
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+*.so
+
+# ===== Node.js =====
+node_modules/
+npm-debug.log*
+yarn-error.log
+
+# ===== Web 构建产物 =====
+web/dist/
+
+# ===== 工作区输出（项目生成的代码）=====
+/workspace/
+
+# ===== 日志 =====
+logs/
+*.log
+
+# ===== PM2 =====
+.pm2/
+*.pid
+pids/
+
+# ===== 会话/经验数据（SQLite）+ LLM 缓存 =====
+.autoc.db
+.autoc/
+.autoc_sessions.json
+
+# ===== 测试产物 =====
+.coverage
+coverage.json
+.pytest_cache/
+tests/e2e-screenshots/
+*.png
+*.jpg
+*.jpeg
+!docs/**/*.png
+
+# ===== Playwright =====
+.playwright-mcp/
+
+# ===== IDE / 工具 =====
+.vscode/
+.idea/
+.cursor/
+.claude/
+.DS_Store
+Thumbs.db
+
+# ===== 用户个人数据 =====
+user_profile.yaml
+
+# ===== 参考代码（不入库）=====
+.refs/
+
+# ===== Benchmark 运行产物 =====
+benchmarks/results/*
+benchmarks/reports/*
+benchmarks/logs/*
+benchmarks/running/
+!benchmarks/results/.gitkeep
+!benchmarks/reports/.gitkeep
+!benchmarks/logs/.gitkeep

@@ -1,0 +1,58 @@
+name: React TypeScript
+tags: [react, typescript, tsx, vite, frontend, spa]
+
+structure: |
+  推荐目录结构 (Vite 脚手架):
+  src/
+    main.tsx             # 入口: ReactDOM.createRoot()
+    App.tsx              # 根组件 + 路由
+    components/          # 通用 UI 组件
+      Button.tsx
+      Layout.tsx
+    pages/               # 页面级组件
+      Home.tsx
+      About.tsx
+    hooks/               # 自定义 Hook
+      useLocalStorage.ts
+    services/            # API 调用层
+      api.ts
+    types/               # TypeScript 类型定义
+      index.ts
+    styles/              # 全局样式
+      global.css
+  public/
+    index.html
+  package.json
+  tsconfig.json
+  vite.config.ts
+
+conventions: |
+  - 组件使用函数式组件 + TypeScript FC 类型:
+      const MyComponent: React.FC<Props> = ({ title }) => { ... }
+  - 状态管理: 简单场景用 useState/useContext，复杂场景用 Zustand
+  - 路由: react-router-dom v7，使用 <BrowserRouter> + <Routes>
+  - API 调用封装在 services/ 层，使用 fetch 或 axios
+  - 样式方案: CSS Modules (.module.css) 或 Tailwind CSS
+  - Props 类型单独定义 interface，不用 any
+  - 副作用在 useEffect 中处理，注意清理函数
+  - 事件处理函数命名: handleClick, handleSubmit
+  - 文件命名: 组件 PascalCase.tsx，工具 camelCase.ts
+
+testing: |
+  - 框架: Vitest + @testing-library/react
+  - 测试文件: __tests__/Component.test.tsx 或 Component.test.tsx
+  - 渲染测试: render(<Component />) + screen.getByText()
+  - 事件测试: fireEvent.click() / userEvent.click()
+  - 快照测试: expect(container).toMatchSnapshot()
+  - Mock API: vi.mock() 或 MSW (Mock Service Worker)
+  - 运行: npx vitest run
+
+dependencies:
+  react: ">=19.0"
+  react-dom: ">=19.0"
+  react-router-dom: ">=7.0"
+  typescript: ">=5.5"
+  vite: ">=6.0"
+  "@vitejs/plugin-react": ">=4.0"
+  vitest: ">=2.0"
+  "@testing-library/react": ">=16.0"

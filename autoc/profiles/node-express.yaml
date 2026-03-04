@@ -1,0 +1,61 @@
+name: Node.js Express
+tags: [node, nodejs, express, javascript, backend, api, rest]
+
+structure: |
+  推荐目录结构:
+  src/
+    index.js             # 入口: app.listen()
+    app.js               # Express 实例 + 中间件注册
+    routes/              # 路由模块
+      index.js           # 路由聚合
+      users.js           # /api/users
+      items.js           # /api/items
+    controllers/         # 业务逻辑
+      userController.js
+    models/              # 数据模型 (Mongoose / Sequelize)
+      User.js
+    middleware/           # 自定义中间件
+      auth.js
+      errorHandler.js
+    config/
+      index.js           # 环境配置
+    utils/               # 工具函数
+  tests/
+    setup.js             # 测试初始化
+    users.test.js
+  package.json
+  .env
+
+conventions: |
+  - 入口分离: app.js 创建 Express 实例，index.js 负责启动监听
+  - 路由分层: routes/ 定义路径映射，controllers/ 处理业务逻辑
+  - 中间件顺序: cors → bodyParser → morgan → routes → errorHandler
+  - 错误处理: 统一 errorHandler 中间件 (err, req, res, next)
+  - 环境变量: dotenv 加载 .env，通过 process.env 访问
+  - 异步路由用 async/await + try-catch，或 express-async-errors
+  - 响应格式统一: { success: true, data: {...} } / { success: false, error: "..." }
+  - 数据库:
+    - MongoDB → Mongoose (Schema + Model)
+    - SQL → Sequelize / Knex
+  - 日志: morgan (HTTP) + winston (应用)
+  - CORS: const cors = require('cors'); app.use(cors())
+
+testing: |
+  - 框架: Jest + supertest
+  - 测试 HTTP 端点:
+      const request = require('supertest');
+      const app = require('../src/app');
+      test('GET /api/users', async () => {
+        const res = await request(app).get('/api/users');
+        expect(res.statusCode).toBe(200);
+      });
+  - 数据库 Mock: 使用 mongodb-memory-server 或 SQLite 内存
+  - 运行: npx jest --coverage
+
+dependencies:
+  express: ">=4.21"
+  cors: ">=2.8"
+  dotenv: ">=16.0"
+  morgan: ">=1.10"
+  jest: ">=29.0"
+  supertest: ">=7.0"

@@ -1,0 +1,10 @@
+name: Web 开发规范
+type: inline
+tags: [web, flask, fastapi, django, express, react, vue]
+agent_roles: [main]
+priority: 70
+content: |
+  前后端分离：API 返回 JSON，前端负责渲染。
+  所有 API 端点必须有错误处理和适当的 HTTP 状态码。
+  敏感配置通过环境变量注入，不要硬编码。
+  静态资源使用相对路径，支持部署到子目录。

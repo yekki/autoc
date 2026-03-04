@@ -1,0 +1,29 @@
+# AutoC - 全自动开发系统 依赖
+# ==============================
+
+# 核心依赖
+openai>=1.60.0          # LLM API 客户端 (兼容 OpenAI 格式)
+pyyaml>=6.0.2           # YAML 配置解析
+rich>=13.9.0            # 终端美化输出
+click>=8.1.7            # Server 启动参数
+pydantic>=2.10.0        # 数据模型验证
+
+# MCP (Model Context Protocol) 支持
+mcp>=1.0.0              # MCP 客户端库
+
+# Web UI 依赖
+fastapi>=0.115.0        # Web 框架
+uvicorn>=0.32.0         # ASGI 服务器
+websockets>=14.0        # WebSocket 支持（终端等功能需要）
+jinja2>=3.1.4           # 模板引擎
+
+# Playwright 浏览器自动化
+playwright>=1.49.0     # 浏览器自动化测试工具
+
+# 可选依赖 - 云沙箱 (预览功能)
+# e2b>=1.0.0            # E2B 云沙箱 (pip install e2b)
+
+# 可选依赖 (代码质量工具，会在需要时自动安装)
+# black>=24.0.0         # Python 代码格式化
+# flake8>=7.0.0         # Python 代码 linting
+# pytest>=8.0.0         # Python 测试框架

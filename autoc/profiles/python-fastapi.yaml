@@ -1,0 +1,57 @@
+name: Python FastAPI
+tags: [python, fastapi, uvicorn, pydantic, async, api]
+
+structure: |
+  推荐目录结构:
+  app/
+    __init__.py
+    main.py              # FastAPI 实例 + 路由挂载
+    config.py            # pydantic-settings 配置
+    models.py            # SQLAlchemy / Tortoise ORM 模型
+    schemas.py           # Pydantic 请求/响应 Schema
+    routers/             # 路由模块 (APIRouter)
+      __init__.py
+      users.py
+      items.py
+    dependencies.py      # Depends() 依赖注入
+    database.py          # 数据库引擎 + SessionLocal
+  tests/
+    conftest.py          # pytest fixtures (TestClient)
+    test_api.py
+  requirements.txt
+  run.py                 # uvicorn app.main:app --reload
+
+conventions: |
+  - 使用 APIRouter 拆分路由，main.py 中 app.include_router() 挂载
+  - 请求/响应模型用 Pydantic BaseModel (schemas.py)
+  - 依赖注入 (Depends) 管理数据库 session、认证等横切关注点
+  - 异步优先: 路由函数使用 async def，IO 操作使用 await
+  - 错误处理: 抛出 HTTPException(status_code=, detail=)
+  - 配置使用 pydantic-settings 的 BaseSettings，从 .env 读取
+  - 数据库:
+      engine = create_async_engine(DATABASE_URL)
+      async_session = sessionmaker(engine, class_=AsyncSession)
+  - CORS: app.add_middleware(CORSMiddleware, allow_origins=["*"])
+  - 启动/关闭: @app.on_event("startup") / @app.on_event("shutdown")
+
+testing: |
+  - 框架: pytest + httpx (TestClient)
+  - conftest.py:
+      from fastapi.testclient import TestClient
+      from app.main import app
+      @pytest.fixture
+      def client():
+          return TestClient(app)
+  - 测试异步端点用 pytest-asyncio + httpx.AsyncClient
+  - 测试 Pydantic 验证: 发送非法 JSON 断言 422
+  - 数据库测试: 使用 SQLite 内存 + override dependency
+
+dependencies:
+  fastapi: ">=0.115"
+  uvicorn: ">=0.30"
+  pydantic: ">=2.0"
+  pydantic-settings: ">=2.0"
+  sqlalchemy: ">=2.0"
+  httpx: ">=0.27"
+  pytest: ">=8.0"
+  pytest-asyncio: ">=0.23"

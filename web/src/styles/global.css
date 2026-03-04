@@ -1,0 +1,243 @@
+/* 全局样式重置 */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Ant Design 微调 */
+.ant-tree .ant-tree-node-content-wrapper {
+  transition: background-color 0.2s;
+}
+
+.ant-tabs-nav {
+  margin-bottom: 0 !important;
+}
+
+/* 滚动条美化 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #30363d;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #484f58;
+}
+
+/* Markdown 渲染通用样式 */
+.markdown-body > *:first-child { margin-top: 0; }
+.markdown-body > *:last-child  { margin-bottom: 0; }
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  margin: 10px 0 6px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.markdown-body h1 { font-size: 15px; }
+.markdown-body h2 { font-size: 14px; }
+.markdown-body h3 { font-size: 13px; }
+.markdown-body h4 { font-size: 13px; }
+
+.markdown-body p {
+  margin: 4px 0;
+  line-height: 1.6;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+
+.markdown-body li { margin: 2px 0; }
+
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 12px;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid #30363d;
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.markdown-body th {
+  background: rgba(255, 255, 255, 0.06);
+  font-weight: 600;
+}
+
+.markdown-body code {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.markdown-body pre {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 10px 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 6px 0;
+}
+
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+}
+
+/* 需求展示区 Markdown 样式（紧凑版） */
+.requirement-markdown > *:first-child { margin-top: 0; }
+.requirement-markdown > *:last-child  { margin-bottom: 0; }
+
+.requirement-markdown h1,
+.requirement-markdown h2,
+.requirement-markdown h3,
+.requirement-markdown h4 {
+  margin: 8px 0 4px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.requirement-markdown h1 { font-size: 15px; }
+.requirement-markdown h2 { font-size: 14px; }
+.requirement-markdown h3 { font-size: 13px; }
+.requirement-markdown h4 { font-size: 12px; }
+
+.requirement-markdown p {
+  margin: 4px 0;
+  line-height: 1.7;
+}
+
+.requirement-markdown ul,
+.requirement-markdown ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+
+.requirement-markdown li {
+  margin: 2px 0;
+}
+
+.requirement-markdown li > p {
+  margin: 0;
+}
+
+.requirement-markdown strong {
+  font-weight: 600;
+}
+
+.requirement-markdown code {
+  background: rgba(127, 127, 127, 0.15);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.requirement-markdown pre {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 8px 10px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 6px 0;
+}
+
+.requirement-markdown pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.requirement-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 6px 0;
+  font-size: 12px;
+}
+
+.requirement-markdown th,
+.requirement-markdown td {
+  border: 1px solid rgba(127, 127, 127, 0.25);
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.requirement-markdown th {
+  background: rgba(127, 127, 127, 0.08);
+  font-weight: 600;
+}
+
+.requirement-markdown blockquote {
+  margin: 4px 0;
+  padding: 2px 12px;
+  border-left: 3px solid rgba(127, 127, 127, 0.3);
+  color: inherit;
+  opacity: 0.8;
+}
+
+.requirement-markdown hr {
+  border: none;
+  border-top: 1px solid rgba(127, 127, 127, 0.2);
+  margin: 8px 0;
+}
+
+.requirement-markdown a {
+  color: #58a6ff;
+  text-decoration: none;
+}
+
+.requirement-markdown a:hover {
+  text-decoration: underline;
+}
+
+/* 项目选择器下拉 - 删除图标默认隐藏，hover 时显示 */
+.project-option-delete {
+  font-size: 10px;
+  color: #8b949e;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+  padding: 2px 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.ant-select-item-option:hover .project-option-delete {
+  opacity: 1;
+}
+
+.project-option-delete:hover {
+  color: #f85149 !important;
+  background: rgba(248, 81, 73, 0.1);
+}
+
+/* 数字等宽显示 */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}

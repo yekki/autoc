@@ -1,0 +1,58 @@
+name: Python Flask
+tags: [python, flask, web, jinja2, sqlalchemy]
+
+structure: |
+  推荐目录结构:
+  app/
+    __init__.py          # create_app() 工厂函数
+    config.py            # 配置类 (Config / DevConfig / ProdConfig)
+    models.py            # SQLAlchemy 数据模型
+    routes/              # Blueprint 路由模块
+      __init__.py
+      main.py            # 主页路由
+      api.py             # API 路由
+    templates/           # Jinja2 模板
+      base.html          # 基础布局
+      index.html
+    static/              # 静态资源
+      css/
+      js/
+  tests/
+    conftest.py          # pytest fixtures (app, client)
+    test_routes.py
+  requirements.txt
+  run.py                 # 启动入口: from app import create_app
+
+conventions: |
+  - 使用 Application Factory 模式 (create_app)，避免循环导入
+  - 用 Blueprint 组织路由，每个功能域一个 Blueprint
+  - 配置通过 class 继承管理:
+      class Config: SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-key')
+      class DevConfig(Config): DEBUG = True
+  - 数据库使用 Flask-SQLAlchemy，模型定义在 models.py
+  - 表单验证使用 Flask-WTF 或手动校验 request.json
+  - 错误处理注册全局 errorhandler (404, 500)
+  - 静态文件通过 url_for('static', filename=...) 引用
+  - 模板继承: 所有页面 extends 'base.html'
+
+testing: |
+  - 框架: pytest + pytest-flask
+  - conftest.py 中定义 app 和 client fixture:
+      @pytest.fixture
+      def app():
+          app = create_app()
+          app.config['TESTING'] = True
+          return app
+      @pytest.fixture
+      def client(app):
+          return app.test_client()
+  - 测试 HTTP 状态码: assert response.status_code == 200
+  - 测试 JSON 响应: response.get_json()
+  - 数据库测试使用 SQLite 内存数据库
+
+dependencies:
+  flask: ">=3.0"
+  flask-sqlalchemy: ">=3.1"
+  python-dotenv: ">=1.0"
+  pytest: ">=8.0"
+  pytest-flask: ">=1.3"
