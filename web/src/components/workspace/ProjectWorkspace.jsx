@@ -3,6 +3,7 @@ import { Tabs, Badge, Empty, Spin } from 'antd'
 import {
   DashboardOutlined, CodeOutlined, GlobalOutlined,
   CodeSandboxOutlined, HistoryOutlined, ThunderboltOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons'
 import useStore from '../../stores/useStore'
 import * as api from '../../services/api'
@@ -12,19 +13,33 @@ import OverviewTab from './OverviewTab'
 import CodeTab from './CodeTab'
 import RequirementHistoryTab from './RequirementHistoryTab'
 import CostTab from './CostTab'
+import LogTab from './LogTab'
 import { formatTokenCount } from './helpers'
+
+const TabScrollWrap = ({ children, noScroll = false }) => (
+  <div style={{
+    height: '100%',
+    minHeight: 0,
+    overflowY: noScroll ? 'hidden' : 'auto',
+    overflowX: 'hidden',
+  }}>
+    {children}
+  </div>
+)
 
 export default function ProjectWorkspace() {
   const theme = useStore(s => s.theme)
   const selectedProjectName = useStore(s => s.selectedProjectName)
   const executionFiles = useStore(s => s.executionFiles)
   const isRunning = useStore(s => s.isRunning)
+  const logCount = useStore(s => s.executionLogs.length)
   const activeTab = useStore(s => s.activeTab)
   const setActiveTab = useStore(s => s.setActiveTab)
   const tokenRuns = useStore(s => s.executionTokenRuns)
   const sessionId = useStore(s => s.sessionId)
   const stats = useStore(s => s.executionStats)
   const executionPreview = useStore(s => s.executionPreview)
+  const agentTokens = useStore(s => s.executionAgentTokens)
 
   const [project, setProject] = useState(null)
   const [workspaceFiles, setWorkspaceFiles] = useState([])
@@ -81,9 +96,38 @@ export default function ProjectWorkspace() {
     )
   }
 
-  const totalTokens = tokenRuns.reduce((s, r) => s + (r.total_tokens || 0), 0) || stats.tokens || 0
+  const _runsTotal = tokenRuns.reduce((s, r) => s + (r.total_tokens || 0), 0)
+  const _currentInRuns = sessionId && tokenRuns.some(r => r.session_id === sessionId)
+  const _liveExtra = (isRunning && !_currentInRuns && (stats.tokens || 0)) || 0
+  const totalTokens = (_runsTotal + _liveExtra) || 0
 
-  const tabItems = [
+  const pastCount = tokenRuns.filter(r => r.session_id && r.session_id !== sessionId).length
+
+  // 所有 Tab 的内容定义（与 key 对应）
+  const tabPanels = {
+    overview: <TabScrollWrap><OverviewTab project={project} /></TabScrollWrap>,
+    code: <TabScrollWrap><CodeTab projectName={selectedProjectName} workspaceFiles={workspaceFiles} /></TabScrollWrap>,
+    preview: (
+      <TabScrollWrap noScroll>
+        <div style={{ height: '100%', padding: 16 }}>
+          <PreviewPanel preview={executionPreview} isRunning={isRunning} isDark={isDark} height="100%" projectName={selectedProjectName} />
+        </div>
+      </TabScrollWrap>
+    ),
+    terminal: (
+      <TabScrollWrap noScroll>
+        <div style={{ height: '100%' }}>
+          <WebTerminal wsUrl={terminalWsUrl} height="100%" />
+        </div>
+      </TabScrollWrap>
+    ),
+    log: <TabScrollWrap><LogTab /></TabScrollWrap>,
+    history: <TabScrollWrap><RequirementHistoryTab /></TabScrollWrap>,
+    cost: <TabScrollWrap><CostTab /></TabScrollWrap>,
+  }
+
+  // 一级主 Tab（始终显示）
+  const primaryTabs = [
     {
       key: 'overview',
       label: (
@@ -92,7 +136,6 @@ export default function ProjectWorkspace() {
           {isRunning && <Badge status="processing" style={{ marginLeft: 6 }} />}
         </span>
       ),
-      children: <OverviewTab project={project} />,
     },
     {
       key: 'code',
@@ -102,7 +145,6 @@ export default function ProjectWorkspace() {
           {workspaceFiles.length > 0 && <Badge count={workspaceFiles.length} size="small" style={{ marginLeft: 6 }} />}
         </span>
       ),
-      children: <CodeTab projectName={selectedProjectName} workspaceFiles={workspaceFiles} />,
     },
     {
       key: 'preview',
@@ -112,68 +154,119 @@ export default function ProjectWorkspace() {
           {executionPreview?.available && <Badge status="success" style={{ marginLeft: 6 }} />}
         </span>
       ),
-      children: (
-        <div style={{ height: '100%', padding: 16 }}>
-          <PreviewPanel preview={executionPreview} isRunning={isRunning} isDark={isDark} height="100%" />
-        </div>
-      ),
-    },
-    {
-      key: 'terminal',
-      label: <span><CodeSandboxOutlined /> 终端</span>,
-      children: (
-        <div style={{ height: '100%' }}>
-          <WebTerminal wsUrl={terminalWsUrl} height="100%" />
-        </div>
-      ),
-    },
-    {
-      key: 'history',
-      label: (
-        <span>
-          <HistoryOutlined /> 需求历史
-          {(() => {
-            const pastCount = tokenRuns.filter(r => r.session_id && r.session_id !== sessionId).length
-            return pastCount > 0 && <Badge count={pastCount} size="small" style={{ marginLeft: 6 }} />
-          })()}
-        </span>
-      ),
-      children: <RequirementHistoryTab />,
-    },
-    {
-      key: 'cost',
-      label: (
-        <span>
-          <ThunderboltOutlined /> 成本
-          {totalTokens > 0 && <Badge count={formatTokenCount(totalTokens)} size="small" style={{ marginLeft: 6 }} />}
-        </span>
-      ),
-      children: <CostTab />,
     },
   ]
 
+  // 二级辅助 Tab（收入 "…" 下拉菜单）
+  const secondaryTabMeta = [
+    { key: 'terminal', label: '终端', icon: <CodeSandboxOutlined /> },
+    {
+      key: 'log', icon: <FileTextOutlined />,
+      label: logCount > 0 ? `日志 (${logCount > 999 ? '999+' : logCount})` : '日志',
+    },
+    {
+      key: 'history', icon: <HistoryOutlined />,
+      label: pastCount > 0 ? `历史 (${pastCount})` : '需求历史',
+    },
+    {
+      key: 'cost', icon: <ThunderboltOutlined />,
+      label: totalTokens > 0 ? `成本 (${formatTokenCount(totalTokens)})` : '成本',
+    },
+  ]
+
+  const tabBg = isDark ? '#161b22' : '#ffffff'
+  const tabBorder = isDark ? '#30363d' : '#d0d7de'
+  const activeColor = isDark ? '#58a6ff' : '#0969da'
+  const inactiveColor = isDark ? '#8b949e' : '#656d76'
+  const hoverBg = isDark ? '#21262d' : '#f6f8fa'
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <Tabs
-        activeKey={activeTab || 'overview'}
-        onChange={setActiveTab}
-        items={tabItems}
-        destroyOnHidden={false}
-        tabBarStyle={{
-          margin: 0,
-          padding: '0 16px',
-          background: isDark ? '#161b22' : '#ffffff',
-          borderBottom: `1px solid ${isDark ? '#30363d' : '#d0d7de'}`,
-        }}
-        tabBarGutter={24}
-        className="workspace-tabs"
-      />
-      <style>{`
-        .workspace-tabs { flex: 1; display: flex; flex-direction: column; }
-        .workspace-tabs > .ant-tabs-content-holder { flex: 1; min-height: 0; }
-        .workspace-tabs .ant-tabs-content { height: 100%; }
-        .workspace-tabs .ant-tabs-tabpane { height: 100%; }
-      `}</style>
+      {/* 自定义 Tab Bar */}
+      <div style={{
+        display: 'flex', alignItems: 'center',
+        background: tabBg,
+        borderBottom: `1px solid ${tabBorder}`,
+        padding: '0 16px',
+        flexShrink: 0,
+        gap: 0,
+      }}>
+        {primaryTabs.map(tab => {
+          const isActive = (activeTab || 'overview') === tab.key
+          return (
+            <div
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              style={{
+                display: 'flex', alignItems: 'center',
+                padding: '10px 16px',
+                fontSize: 13,
+                fontWeight: isActive ? 500 : 400,
+                color: isActive ? activeColor : inactiveColor,
+                borderBottom: isActive ? `2px solid ${activeColor}` : '2px solid transparent',
+                cursor: 'pointer',
+                userSelect: 'none',
+                transition: 'color 0.15s, background 0.15s',
+                borderRadius: '4px 4px 0 0',
+                marginBottom: -1,
+              }}
+              onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = hoverBg }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+            >
+              {tab.label}
+            </div>
+          )
+        })}
+
+        {/* 分隔线 */}
+        <div style={{ width: 1, height: 16, background: tabBorder, margin: '0 4px', flexShrink: 0 }} />
+
+        {/* 辅助 Tab 直接展开 */}
+        {secondaryTabMeta.map(tab => {
+          const isActive = (activeTab || 'overview') === tab.key
+          return (
+            <div
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '10px 16px',
+                fontSize: 13,
+                fontWeight: isActive ? 500 : 400,
+                color: isActive ? activeColor : inactiveColor,
+                borderBottom: isActive ? `2px solid ${activeColor}` : '2px solid transparent',
+                cursor: 'pointer',
+                userSelect: 'none',
+                transition: 'color 0.15s, background 0.15s',
+                borderRadius: '4px 4px 0 0',
+                marginBottom: -1,
+                whiteSpace: 'nowrap',
+              }}
+              onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = hoverBg }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+            >
+              {tab.icon}
+              <span>{tab.label}</span>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Tab 内容区：所有面板始终挂载，active 的才显示 */}
+      <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+        {Object.entries(tabPanels).map(([key, panel]) => (
+          <div
+            key={key}
+            style={{
+              position: 'absolute', inset: 0,
+              display: (activeTab || 'overview') === key ? 'block' : 'none',
+              overflow: 'hidden',
+            }}
+          >
+            {panel}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

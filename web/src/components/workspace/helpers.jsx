@@ -9,7 +9,9 @@ import {
  */
 export function buildFileTree(files) {
   const root = { children: {} }
-  for (const fp of files) {
+  for (let fp of files) {
+    if (typeof fp !== 'string') fp = fp?.path || fp?.name || String(fp)
+    if (!fp || fp.startsWith('{') || fp.startsWith('[')) continue
     const parts = fp.split('/')
     let node = root
     for (let i = 0; i < parts.length; i++) {
@@ -46,6 +48,18 @@ export function formatTokenCount(n) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
   return n.toLocaleString()
+}
+
+/**
+ * R-019: 将 token 数估算为人民币费用（¥）
+ * 基准：约 ¥0.02 / 1K tokens（主力模型平均值）
+ * 返回带单位的字符串，如 "约 ¥2.5" 或 null（token 数过少时不显示）
+ */
+export function estimateTokenCost(n) {
+  if (!n || n < 1000) return null
+  const cny = (n / 1000) * 0.02
+  if (cny < 0.1) return null
+  return `约 ¥${cny.toFixed(cny >= 10 ? 1 : 2)}`
 }
 
 /**

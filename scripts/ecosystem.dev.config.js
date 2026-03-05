@@ -13,13 +13,7 @@ module.exports = {
       instances: 1,
       exec_mode: 'fork',
       autorestart: true,
-      watch: [path.join(PROJECT_DIR, 'autoc')],
-      ignore_watch: [
-        'workspace', '.autoc', '__pycache__', 'node_modules',
-        '*.pyc', '.git', 'logs', 'web', '.venv', 'tests',
-        '.autoc_state', '.autoc_experience', '*.db', '*.db-*',
-      ],
-      watch_delay: 2000,
+      watch: false,
       max_memory_restart: '1G',
       env: {
         NODE_ENV: 'development',

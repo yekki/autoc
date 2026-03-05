@@ -9,8 +9,11 @@ import useStore from '../../stores/useStore'
 import PhaseProgress from '../shared/PhaseProgress'
 
 const AGENT_COLORS = {
-  'PM Agent': '#58a6ff',
+  'Planner': '#58a6ff',
+  '辅助 AI': '#58a6ff',
+  'Coder Agent': '#3fb950',
   'Developer Agent': '#3fb950',
+  'Critique Agent': '#d29922',
   'Tester Agent': '#d29922',
   'system': '#8b949e',
   'loop': '#bc8cff',
@@ -23,6 +26,7 @@ const EVENT_LABELS = {
   task_start: '任务开始',
   task_complete: '任务完成',
   task_verified: '任务验证',
+  task_regression: '回归检查',
   test_result: '测试结果',
   file_created: '文件创建',
   tool_call: '工具调用',
@@ -69,6 +73,8 @@ function formatLogMessage(log) {
       return `完成: ${data.title || data.task_id} ${data.success === false ? '(失败)' : ''}`
     case 'task_verified':
       return `验证: ${data.task_id} — ${data.passes ? 'PASS' : 'FAIL'}`
+    case 'task_regression':
+      return `回归: ${data.task_id} — ${data.reason || '共享文件被修改'}`
     case 'test_result':
       return `测试 ${data.passed ? '通过' : '未通过'} — ${data.verified_tasks || data.tests_passed || 0}/${data.total_tasks || data.tests_total || 0}, Bug: ${data.bug_count || 0}`
     case 'file_created':

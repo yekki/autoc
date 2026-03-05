@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Tree, Button, Tooltip, Badge, Empty, Spin, message } from 'antd'
 import { ReloadOutlined, EditOutlined, EyeOutlined } from '@ant-design/icons'
 import useStore from '../../stores/useStore'
@@ -13,6 +13,7 @@ export default function CodeTab({ projectName, workspaceFiles }) {
   const theme = useStore(s => s.theme)
   const isDark = theme === 'dark'
   const newlyCreatedFiles = useStore(s => s.newlyCreatedFiles) || []
+  const setExecutionPlanMd = useStore(s => s.setExecutionPlanMd)
 
   const [selectedFile, setSelectedFile] = useState(null)
   const [fileContent, setFileContent] = useState('')
@@ -22,6 +23,45 @@ export default function CodeTab({ projectName, workspaceFiles }) {
   const [files, setFiles] = useState(workspaceFiles)
   const [prevNewCount, setPrevNewCount] = useState(0)
   const [editMode, setEditMode] = useState(false)
+
+  // 文件树宽度拖拽
+  const STORAGE_KEY = 'autoc-codetab-tree-width'
+  const [treeWidth, setTreeWidth] = useState(() => {
+    const saved = localStorage.getItem(STORAGE_KEY)
+    return saved ? Math.max(160, Math.min(600, Number(saved))) : 240
+  })
+  const draggingRef = useRef(false)
+  const startXRef = useRef(0)
+  const startWidthRef = useRef(0)
+
+  useEffect(() => {
+    const onMove = (e) => {
+      if (!draggingRef.current) return
+      const delta = e.clientX - startXRef.current
+      const next = Math.max(160, Math.min(600, startWidthRef.current + delta))
+      setTreeWidth(next)
+    }
+    const onUp = () => {
+      if (draggingRef.current) {
+        draggingRef.current = false
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+        setTreeWidth(w => { localStorage.setItem(STORAGE_KEY, String(w)); return w })
+      }
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+  }, [])
+
+  const handleResizeStart = useCallback((e) => {
+    e.preventDefault()
+    draggingRef.current = true
+    startXRef.current = e.clientX
+    startWidthRef.current = treeWidth
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }, [treeWidth])
 
   // 同步外部传入的文件列表
   useEffect(() => {
@@ -113,20 +153,24 @@ export default function CodeTab({ projectName, workspaceFiles }) {
       await api.saveProjectFile(projectName, path, content)
       setOriginalContent(content)
       setFileContent(content)
+      // 若保存的是 PLAN.md，同步更新概览页的展示内容
+      if (path === 'PLAN.md' && setExecutionPlanMd) {
+        setExecutionPlanMd(content)
+      }
       message.success(`已保存: ${path}`)
     } catch (e) {
       message.error(`保存失败: ${e.message}`)
     } finally {
       setSaving(false)
     }
-  }, [projectName])
+  }, [projectName, setExecutionPlanMd])
 
   const borderColor = isDark ? '#30363d' : '#d0d7de'
 
   return (
     <div style={{ display: 'flex', height: '100%' }}>
       {/* 文件树 */}
-      <div style={{ width: 240, borderRight: `1px solid ${borderColor}`, overflow: 'auto', flexShrink: 0 }}>
+      <div style={{ width: treeWidth, flexShrink: 0, overflow: 'auto' }}>
         <div style={{
           padding: '8px 12px', display: 'flex', justifyContent: 'space-between',
           alignItems: 'center', borderBottom: `1px solid ${borderColor}`,
@@ -149,6 +193,19 @@ export default function CodeTab({ projectName, workspaceFiles }) {
           <Empty description="暂无文件" image={Empty.PRESENTED_IMAGE_SIMPLE} style={{ marginTop: 40 }} />
         )}
       </div>
+
+      {/* 拖拽分隔条 */}
+      <div
+        className="codetab-resize-handle"
+        onMouseDown={handleResizeStart}
+        style={{
+          width: 4, flexShrink: 0, cursor: 'col-resize',
+          background: borderColor, position: 'relative',
+          transition: 'background 0.15s',
+        }}
+        onMouseEnter={e => e.currentTarget.style.background = isDark ? '#58a6ff' : '#0969da'}
+        onMouseLeave={e => { if (!draggingRef.current) e.currentTarget.style.background = borderColor }}
+      />
 
       {/* 编辑器区域 */}
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>

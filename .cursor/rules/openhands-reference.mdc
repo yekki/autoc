@@ -1,0 +1,36 @@
+---
+description: OpenHands 代码参考 — 本地克隆优先，编辑 Agent/Core 模块时自动加载
+globs:
+  - "autoc/agents/**/*.py"
+  - "autoc/core/**/*.py"
+alwaysApply: false
+---
+
+# OpenHands 参考
+
+## 本地克隆路径
+
+查看、分析或引用 OpenHands 代码时，**优先读取本地克隆**，禁止猜测：
+
+```
+.refs/openhands/
+```
+
+## 模块映射
+
+| AutoC 模块 | OpenHands 对应 | 参考要点 |
+|-----------|---------------|---------|
+| `agents/base.py` | `agenthub/codeact_agent/` | ReAct 循环、Function Calling 分发 |
+| `core/llm/client.py` | `llm/llm.py` | 重试策略、Token 计量、流式响应 |
+| `core/llm/condenser.py` | `memory/condenser/` | 压缩策略选择、阈值控制 |
+| `core/infra/stuck_detector.py` | `controller/stuck.py` | 停滞模式检测、恢复策略 |
+| `core/security/analyzer.py` | `security/` | 工具注解协议、策略评估 |
+| `tools/sandbox.py` | `runtime/` | 沙箱生命周期、命令执行 |
+| `prompts/` | `agenthub/*/prompt/` | Jinja2 模板组织、Few-Shot 示例 |
+
+## 参考原则
+
+1. **直接复用**：OpenHands 有成熟实现时参考其 API 设计和核心算法
+2. **模式借鉴**：Agent 循环、工具分发、上下文压缩等以 OpenHands 为标杆
+3. **适配调整**：OpenHands 面向多用户 SaaS，AutoC 面向个人用户 — 删除多租户/集群/权限复杂度
+4. 遇到设计分歧时默认采用 OpenHands 方案，除非有明确产品定位冲突

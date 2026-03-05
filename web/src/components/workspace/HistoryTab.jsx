@@ -12,10 +12,110 @@ import { formatTokenCount } from './helpers'
 const { Text } = Typography
 
 const AGENT_COLORS = {
-  refiner: '#8b949e', pm: '#58a6ff', dev: '#3fb950',
-  developer: '#3fb950', test: '#d29922', tester: '#d29922', system: '#8b949e',
+  refiner: '#8b949e', helper: '#58a6ff', coder: '#3fb950', dev: '#3fb950',
+  developer: '#3fb950', implementer: '#3fb950', critique: '#d29922', test: '#d29922', tester: '#d29922', system: '#8b949e',
 }
-const AGENT_LABEL = { refiner: '优化', pm: 'PM', dev: '开发', test: '测试', developer: '开发', tester: '测试' }
+const AGENT_LABEL = { refiner: '优化', helper: '辅助 AI', planner: '规划', coder: 'Coder AI', dev: 'Coder AI', implementer: '实现', critique: 'Critique AI', test: 'Critique AI', developer: 'Coder AI', tester: 'Critique AI' }
+
+function HistorySessionItem({ session, realIdx, isDark, onDelete }) {
+  const sectionKey = `history-session-${session.session_id || realIdx}`
+  const storedCollapsed = useStore(s => s.collapsedSections[sectionKey])
+  const setSectionCollapsed = useStore(s => s.setSectionCollapsed)
+  const isOpen = storedCollapsed === undefined ? false : !storedCollapsed
+
+  const ts = session.timestamp
+    ? new Date(session.timestamp).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+    : ''
+  const isFailed = session.success === false || session.status === 'failed'
+  const isSuccess = session.success === true || session.status === 'completed'
+
+  return (
+    <Collapse size="small" style={{ marginBottom: 8 }}
+      activeKey={isOpen ? ['0'] : []}
+      onChange={(keys) => setSectionCollapsed(sectionKey, !keys.includes('0'))}
+      expandIcon={({ isActive }) => <CaretRightOutlined rotate={isActive ? 90 : 0} />}
+      items={[{
+        key: '0',
+        label: (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+            <span style={{ fontWeight: 600 }}>会话</span>
+            {session.session_id && (
+              <span style={{ fontSize: 11, fontFamily: 'monospace', color: isDark ? '#58a6ff' : '#0969da' }}>
+                #{session.session_id.slice(0, 8)}
+              </span>
+            )}
+            <Text type="secondary" style={{ fontSize: 11 }}>{ts}</Text>
+            {isSuccess
+              ? <Tag icon={<CheckCircleFilled />} color="success" style={{ margin: 0 }}>成功</Tag>
+              : isFailed
+                ? <Tag icon={<CloseCircleFilled />} color="error" style={{ margin: 0 }}>失败</Tag>
+                : null
+            }
+            <span style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, color: isDark ? '#8b949e' : '#656d76' }}>
+              <ThunderboltOutlined style={{ fontSize: 10 }} />
+              {formatTokenCount(session.total_tokens || 0)}
+            </span>
+            <Popconfirm title="删除此会话记录？"
+              onConfirm={(e) => { e?.stopPropagation(); onDelete(session, realIdx) }}
+              onCancel={(e) => e?.stopPropagation()}
+              okText="删除" cancelText="取消"
+            >
+              <Button type="text" size="small" danger
+                icon={<DeleteOutlined style={{ fontSize: 11 }} />}
+                onClick={(e) => e.stopPropagation()}
+                style={{ marginLeft: 'auto', padding: '0 4px' }}
+              />
+            </Popconfirm>
+          </span>
+        ),
+        children: (
+          <div style={{ padding: '8px 12px' }}>
+            {(session.requirement || session.description) && (
+              <div style={{ fontSize: 12, color: isDark ? '#8b949e' : '#656d76', marginBottom: 8 }}>
+                需求：{session.requirement || session.description}
+              </div>
+            )}
+            {isFailed && session.failure_reason && (
+              <div style={{
+                fontSize: 12, marginBottom: 8, padding: '6px 10px', borderRadius: 4,
+                background: isDark ? 'rgba(248,81,73,0.1)' : 'rgba(248,81,73,0.06)',
+                color: isDark ? '#f85149' : '#cf222e',
+              }}>
+                失败原因：{session.failure_reason}
+              </div>
+            )}
+            {session.agent_tokens && Object.keys(session.agent_tokens).length > 0 && (
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12, marginBottom: 4 }}>
+                {Object.entries(session.agent_tokens)
+                  .filter(([k, v]) => !k.startsWith('_') && v > 0)
+                  .map(([agent, tokens]) => (
+                    <span key={agent} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: AGENT_COLORS[agent] || '#8b949e', display: 'inline-block' }} />
+                      <span style={{ color: isDark ? '#8b949e' : '#656d76' }}>{AGENT_LABEL[agent] || agent}</span>
+                      <span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatTokenCount(tokens)}</span>
+                    </span>
+                  ))
+                }
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 12, fontSize: 11, color: isDark ? '#6e7681' : '#8c959f' }}>
+              {session.elapsed_seconds > 0 && (
+                <span>
+                  <ClockCircleOutlined style={{ marginRight: 4 }} />
+                  耗时 {session.elapsed_seconds.toFixed(1)}s
+                </span>
+              )}
+              {session.source && (
+                <span>来源：{session.source === 'web' ? '网页' : session.source === 'cli' ? '命令行' : session.source}</span>
+              )}
+              {session.event_count > 0 && <span>{session.event_count} 个事件</span>}
+            </div>
+          </div>
+        ),
+      }]}
+    />
+  )
+}
 
 export default function HistoryTab() {
   const theme = useStore(s => s.theme)
@@ -56,93 +156,13 @@ export default function HistoryTab() {
 
       {visiblePastSessions.map((session, visualIdx) => {
         const realIdx = pastSessions.indexOf(session)
-        const ts = session.timestamp
-          ? new Date(session.timestamp).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-          : ''
-        const isFailed = session.success === false || session.status === 'failed'
-        const isSuccess = session.success === true || session.status === 'completed'
         return (
-          <Collapse key={realIdx} size="small" style={{ marginBottom: 8 }}
-            expandIcon={({ isActive }) => <CaretRightOutlined rotate={isActive ? 90 : 0} />}
-            items={[{
-              key: '0',
-              label: (
-                <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-                  <span style={{ fontWeight: 600 }}>会话</span>
-                  {session.session_id && (
-                    <span style={{ fontSize: 11, fontFamily: 'monospace', color: isDark ? '#58a6ff' : '#0969da' }}>
-                      #{session.session_id.slice(0, 8)}
-                    </span>
-                  )}
-                  <Text type="secondary" style={{ fontSize: 11 }}>{ts}</Text>
-                  {isSuccess
-                    ? <Tag icon={<CheckCircleFilled />} color="success" style={{ margin: 0 }}>成功</Tag>
-                    : isFailed
-                      ? <Tag icon={<CloseCircleFilled />} color="error" style={{ margin: 0 }}>失败</Tag>
-                      : null
-                  }
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, color: isDark ? '#8b949e' : '#656d76' }}>
-                    <ThunderboltOutlined style={{ fontSize: 10 }} />
-                    {formatTokenCount(session.total_tokens || 0)}
-                  </span>
-                  <Popconfirm title="删除此会话记录？"
-                    onConfirm={(e) => { e?.stopPropagation(); handleDeleteSession(session, realIdx) }}
-                    onCancel={(e) => e?.stopPropagation()}
-                    okText="删除" cancelText="取消"
-                  >
-                    <Button type="text" size="small" danger
-                      icon={<DeleteOutlined style={{ fontSize: 11 }} />}
-                      onClick={(e) => e.stopPropagation()}
-                      style={{ marginLeft: 'auto', padding: '0 4px' }}
-                    />
-                  </Popconfirm>
-                </span>
-              ),
-              children: (
-                <div style={{ padding: '8px 12px' }}>
-                  {(session.requirement || session.description) && (
-                    <div style={{ fontSize: 12, color: isDark ? '#8b949e' : '#656d76', marginBottom: 8 }}>
-                      需求：{session.requirement || session.description}
-                    </div>
-                  )}
-                  {isFailed && session.failure_reason && (
-                    <div style={{
-                      fontSize: 12, marginBottom: 8, padding: '6px 10px', borderRadius: 4,
-                      background: isDark ? 'rgba(248,81,73,0.1)' : 'rgba(248,81,73,0.06)',
-                      color: isDark ? '#f85149' : '#cf222e',
-                    }}>
-                      失败原因：{session.failure_reason}
-                    </div>
-                  )}
-                  {session.agent_tokens && Object.keys(session.agent_tokens).length > 0 && (
-                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12, marginBottom: 4 }}>
-                      {Object.entries(session.agent_tokens)
-                        .filter(([k, v]) => !k.startsWith('_') && v > 0)
-                        .map(([agent, tokens]) => (
-                          <span key={agent} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <span style={{ width: 6, height: 6, borderRadius: '50%', background: AGENT_COLORS[agent] || '#8b949e', display: 'inline-block' }} />
-                            <span style={{ color: isDark ? '#8b949e' : '#656d76' }}>{AGENT_LABEL[agent] || agent}</span>
-                            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatTokenCount(tokens)}</span>
-                          </span>
-                        ))
-                      }
-                    </div>
-                  )}
-                  <div style={{ display: 'flex', gap: 12, fontSize: 11, color: isDark ? '#6e7681' : '#8c959f' }}>
-                    {session.elapsed_seconds > 0 && (
-                      <span>
-                        <ClockCircleOutlined style={{ marginRight: 4 }} />
-                        耗时 {session.elapsed_seconds.toFixed(1)}s
-                      </span>
-                    )}
-                    {session.source && (
-                      <span>来源：{session.source === 'web' ? '网页' : session.source === 'cli' ? '命令行' : session.source}</span>
-                    )}
-                    {session.event_count > 0 && <span>{session.event_count} 个事件</span>}
-                  </div>
-                </div>
-              ),
-            }]}
+          <HistorySessionItem
+            key={realIdx}
+            session={session}
+            realIdx={realIdx}
+            isDark={isDark}
+            onDelete={handleDeleteSession}
           />
         )
       })}

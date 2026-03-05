@@ -1,0 +1,149 @@
+---
+description: AutoC 核心模块架构模式与修改指引，编辑 autoc/core/ 时自动加载
+globs: autoc/core/**/*.py
+alwaysApply: false
+---
+
+# 核心模块架构模式
+
+## 关键设计模式
+
+**迭代循环架构**（`loop.py`）
+- `IterativeLoop` 管理 Plan → Dev 循环（CodeActAgent 在 ReAct 循环内完成编码+验证+修复）
+- **上下文隔离**：每个 task 通过 `agent.clone()` 创建全新实例，防止跨 task 上下文污染
+- **前序任务摘要**：`_build_prev_tasks_summary()` 将已完成任务的标题和文件列表注入 Dev prompt，减少跨任务上下文断裂
+- **代码摘要注入**：`_generate_codebase_summary()` 扫描工作区，提取类/函数签名，零额外 Token 注入 Dev Prompt
+- **增量变更传递**：`_iteration_changed_files` 仅含本轮变更文件，精确传递给 Tester
+- **任务级失败保护**：`_task_failures` 字典跟踪每个任务失败次数，超过 `max_task_retries`（默认 3）后跳过
+- **预算优雅降级**：80% 迭代用量时自动追加"Budget 即将耗尽"警告并剥离探索类工具
+- **Checkpoint**：每次迭代后调用 `orc._save_checkpoint()`，支持中断恢复
+- **Interface Spec 注入**：PM 产出的 `interface_spec` 经有效性校验后写入 PRDState
+- 状态通过 `StateManager`（文件）+ SQLite 持久化，不依赖内存
+
+**双条件退出门控**（`exit_detector.py`）
+- 必须同时满足：`completion_indicators` 命中 + `EXIT_SIGNAL` 出现，才允许退出
+- 修改退出阈值：改 `COMPLETION_PATTERNS` 和 `ExitDetector.analyze()`
+
+**三态熔断器**（`circuit_breaker.py`）
+- CLOSED → OPEN（连续 5 次失败或致命错误）→ HALF_OPEN（探测恢复）
+- 连续 3 次失败注入警告；成功后计数重置
+- 修改阈值：改 `CircuitBreaker._evaluate_breaker()`
+
+**SAIC 四层防 Agent 迭代耗尽**（`loop.py`）
+- Layer 1: 进度追踪（explore/produce/execute 阶段）
+- Layer 2: 动态提醒注入
+- Layer 2.5: 70% 预算时剥离探索类工具
+- Layer 3: 倒数 2 轮移除全部 tools 强制文本输出
+
+**二层数据模型**（`models.py`）
+- `ProjectMetadata` → `Task`（含 `passes` 字段驱动完成判定）
+- `feature_tag` 用于 UI 可选分组，取代原 requirement_id
+- 纯 Pydantic 模型，`memory.py` re-export 保持兼容
+
+**SQLite 存储**（`db.py`）
+- WAL 模式 + 写锁保证并发安全
+- `ProjectDB`（项目数据）/ `GlobalDB`（会话/经验）分离
+- `autoc.db` 和 `autoc-progress.txt` 在 `.gitignore` 中，`rollback()` 前需备份
+
+## 修改指引
+
+### 编排与循环
+
+| 目标 | 修改位置 |
+|------|---------|
+| 调整退出检测 | `analysis/exit_detector.py` → `COMPLETION_PATTERNS` / `analyze()` |
+| 调整熔断策略 | `infra/circuit_breaker.py` → `CircuitBreaker.record()` |
+| 修改迭代 Prompt | `orchestrator/loop_support.py` → `_build_dev_prompt()` / `_build_context()` |
+| 修改代码摘要提取规则 | `orchestrator/loop_support.py` → `_extract_signatures()` / `_generate_codebase_summary()` |
+| 修改 Dev 上下文隔离 | `orchestrator/loop_exec.py` → `_execute_dev()` 中的 `clone()` 逻辑 |
+| 修改前序任务摘要 | `orchestrator/loop_support.py` → `_build_prev_tasks_summary()` |
+| 修改任务失败重试上限 | `orchestrator/loop.py` → `_max_task_retries` + `_determine_phase()` |
+| 修改 Interface Spec 传播 | `orchestrator/loop_exec.py` → PM 产出处理 + `loop_support.py` → `_build_dev_prompt()` |
+| 修改快速验证命令 | `orchestrator/loop_fix.py` → `_quick_verify()` 调用 `get_test_command()` |
+| 修改阶段转换逻辑 | `orchestrator/loop.py` → `_determine_phase()` / `_transition()` |
+| 修改 Critique 评审 | `orchestrator/loop_review.py` → `_execute_pm_review()` (已改用 CritiqueAgent) |
+| Bug 优先级排序 | `orchestrator/loop_fix.py` → `_prioritize_bugs()` |
+| 修改反思机制 | `orchestrator/loop_fix.py` → `_run_reflection()` |
+
+### 调度与生命周期
+
+| 目标 | 修改位置 |
+|------|---------|
+| 修改需求优化流程 | `orchestrator/scheduler.py` → `refine_requirement()` |
+| 修改 PM 阶段流程 | `orchestrator/scheduler.py` → `run_pm_phase()` / `post_pm_phase()` |
+| 修改 Dev+Test 流程 | `orchestrator/scheduler.py` → `run_dev_and_test()` |
+| 修改快速修复流程 | `orchestrator/scheduler_ops.py` → `execute_quick_fix()` |
+| 修改断点恢复流程 | `orchestrator/scheduler_ops.py` → `execute_resume()` |
+| 修改主需求变更流程 | `orchestrator/scheduler_ops.py` → `execute_redefine_project()` |
+| 修改追加功能流程 | `orchestrator/scheduler_ops.py` → `execute_add_feature()` |
+| 调整 Token 预算检查 | `orchestrator/gates.py` → `check_token_budget()` |
+| 修改回滚推断逻辑 | `orchestrator/gates.py` → `infer_rollback_commit()` |
+| 修改 Checkpoint | `orchestrator/lifecycle.py` → `save_checkpoint()` / `load_checkpoint()` |
+| 修改 Token 统计发送 | `orchestrator/lifecycle.py` → `emit_token_session()` / `collect_agent_tokens()` |
+| 修改经验记录 | `orchestrator/lifecycle.py` → `record_experience()` |
+
+### 分析与基础设施
+
+| 目标 | 修改位置 |
+|------|---------|
+| 修改复杂度评估 | `analysis/complexity.py` → `assess_complexity()` + `StackAdapter.complexity_indicators()` |
+| 修改失败模式分类 | `analysis/failure_analyzer.py` → `FailureAnalyzer.analyze()` + `_classify_failure_type()` |
+| 调整需求优化质量阈值 | `analysis/refiner.py` → `RequirementRefiner(quality_threshold_*)` / `assess_quality()` |
+| 修改 Token 计费模型 | `analysis/token_stats.py` → `get_model_pricing()` / `estimate_cost()` |
+| 修改经验检索 | `analysis/experience.py` → `ExperienceStore.get_relevant_experiences()` |
+| 修改 PRD 导入 | `project/prd_import.py` → `import_prd()` / `build_import_prompt()` |
+
+### LLM 与运行时
+
+| 目标 | 修改位置 |
+|------|---------|
+| 修改 LLM 调用 | `llm/client.py` → `LLMClient.chat()` |
+| 修改模型路由 | `llm/router.py` → `ModelRouter.route()` |
+| 修改 LLM 缓存策略 | `llm/cache.py` → `LLMCache.get()` / `put()` / `should_cache()` |
+| 修改上下文构建 | `llm/context_builder.py` → `ContextBuilder.build()` |
+| 修改状态文件格式 | `project/state.py` → `PRDState` / `UserStory` 模型 |
+| 修改会话过期策略 | `runtime/session_registry.py` → `expiry_hours`（默认 24h）|
+| 修改沙箱配置 | `orchestrator/facade.py` → `DockerSandbox(...)` 初始化参数 |
+| 修改命令执行 | `tools/shell.py` → `execute()` 强制沙箱执行，无本地回退 |
+| 修改 Profile 匹配 | `infra/profile.py` → `ProfileManager.match()` |
+| 修改归档策略 | `project/state.py` → `archive_run()` / `should_archive()` |
+| 新增/修改技术栈支持 | `stacks/{stack}.py` → 实现 `StackAdapter` 接口 |
+
+## 错误排查速查
+
+| 症状 | 排查入口 | 关键方法 |
+|------|---------|---------|
+| 任务一直不退出/循环 | `analysis/exit_detector.py` | `ExitDetector.analyze()` — 检查 `completion_indicators` + `EXIT_SIGNAL` 双条件 |
+| 任务过早退出 | `analysis/exit_detector.py` | 检查 `COMPLETION_PATTERNS` 是否误命中 |
+| 熔断器误触发 | `infra/circuit_breaker.py` | `CircuitBreaker.record()` — 检查 `no_progress_threshold=5` |
+| Dev 空产出（未创建文件）| `orchestrator/loop_exec.py` | `_check_story_files_exist()` → `_record_task_failure()` |
+| 测试阶段无文件报错 | `agents/tester.py` | `_pre_check_workspace()` → 返回 `failure_type: NO_OUTPUT` |
+| Fix 循环无效/Bug 反复 | `orchestrator/loop_fix.py` | `_prioritize_bugs()` → `_run_reflection()` → 检查策略升级 |
+| 回归 Bug（修一个坏一个）| `analysis/failure_analyzer.py` | `_detect_regression()` — 对比 `previous_reports` + `fix_history` |
+| Token 消耗异常高 | `orchestrator/gates.py` | `check_token_budget()` — 检查 80% 预警 + 预算耗尽逻辑 |
+| LLM 返回空/超时 | `llm/client.py` | `LLMClient.chat()` — 检查 timeout / API 限制检测 |
+| LLM 缓存未命中 | `llm/cache.py` | `LLMCache.get()` — 检查 `should_cache()` 温度条件 + TTL |
+| Docker 沙箱启动失败 | `tools/sandbox.py` | `DockerSandbox.ensure_ready()` — 检查 Docker 可用性 + 镜像拉取 |
+| 命令执行超时 | `tools/shell.py` | `ShellExecutor.execute()` — 检查 timeout + 输出压缩 |
+| 路径越界报错 | `tools/file_ops.py` | `FileOps._resolve_path()` — 检查工作区边界 |
+| Git 回滚损坏内部文件 | `tools/git_ops.py` | `rollback()` — 检查 AutoC 内部文件备份/恢复 |
+| 会话状态丢失 | `project/state.py` | `StateManager.load_prd()` / `save_prd()` — 检查文件读写 |
+| 项目进度不同步 | `orchestrator/loop_support.py` | `_sync_to_sqlite()` + `project/progress.py` → `update_task_status()` |
+| 项目状态卡在"测试中" | `orchestrator/facade.py` + `server/routes_execution.py` | `run()` 中 `SystemExit` 捕获 + `finalize()` try/except 兜底 + 用户终止时 `update_status(INCOMPLETE)` |
+| 需求优化质量低 | `analysis/refiner.py` | `assess_quality()` — 检查 `quality_threshold_*` 阈值 |
+| PRD 导入解析失败 | `project/prd_import.py` | `build_import_prompt()` — 检查格式检测 + prompt 模板 |
+| 增量开发任务 ID 冲突 | `orchestrator/scheduler.py` | `renumber_conflicting_tasks()` |
+| Checkpoint 恢复失败 | `orchestrator/lifecycle.py` | `load_checkpoint()` → `run_from_checkpoint()` |
+
+## 注意事项
+
+- `Orchestrator` 支持 `with Orchestrator(...) as orc:` 自动清理沙箱资源
+- **强制沙箱模式**：`facade.py` 无条件创建 `DockerSandbox` 并注入 `ShellExecutor`，不支持本地模式
+- 项目状态推进：`scheduler.py` → `run_dev_and_test()` → developing → testing → `update_progress()` 推导 completed
+- success 判定：仅 critical/high bug 算阻塞，low/medium 不导致 success=false
+- 修复策略按 `fix_attempts` 自动升级：默认 → 重构 → 重写
+- **Bug 验证闭环**：`fix_bugs()` → `pending_verification` → `_quick_verify()` → `fixed` / 回退 `open`
+- **关联 Bug 分组**：`_group_related_bugs()` 按 `file_path` 分组，同文件 Bug 共享上下文
+- **`_quick_verify()` 动态命令**：通过 `get_test_command()` 获取技术栈测试命令，非硬编码 pytest
+- **Mixin 模式**：`IterativeLoop` = `loop.py` 主类 + `loop_exec.py`（执行）+ `loop_review.py`（评审）+ `loop_support.py`（辅助）
+- **CritiqueAgent 可选**：默认关闭，需在 Web UI 设置中手动启用 `enable_critique`

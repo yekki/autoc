@@ -1,0 +1,53 @@
+# AutoC 文档管理配置
+# 供 .cursor/skills/docs-management/ Skill 使用
+
+# 文档目录结构
+directories:
+  design: docs/design/        # 产品方案
+  research: docs/research/    # 调研分析
+  guides: docs/guides/        # 使用指南
+  benchmarks: docs/benchmarks/ # Benchmark 复盘
+  archive: docs/archive/      # 废弃归档
+
+# 映射表位置
+mapping_file: docs/mapping.md
+
+# 注册表位置
+registry_file: docs/README.md
+
+# 文档格式规范
+format:
+  language: zh-CN
+  title_level_start: 2       # 正文从 ## 开始
+  code_highlight: true        # 代码块必须语法高亮
+  design_required_sections:
+    - 实现追踪表
+    - 变更记录
+  research_required_sections:
+    - 改进建议
+    - 实现追踪表
+    - 变更记录
+
+# 代码扫描范围
+scan:
+  python_root: autoc/
+  web_root: web/src/
+  exclude_dirs:
+    - __pycache__
+    - node_modules
+    - .git
+    - .venv
+
+# design → guides 联动映射（精简版，完整版见 docs.mdc）
+linkage:
+  架构总览.md: [使用手册.md]
+  Agent系统设计.md: [使用手册.md]
+  编排器.md: [使用手册.md, Web界面指南.md]
+  LLM客户端.md: [使用手册.md, 模型选型指南.md]
+  工具系统.md: [使用手册.md, MCP快速入门.md, 浏览器自动化指南.md]
+  项目管理.md: [项目管理指南.md]
+  运行时沙箱.md: [PM2部署指南.md, 使用手册.md]
+  Web前端.md: [Web界面指南.md, 项目管理指南.md]
+  Token追踪.md: [Web界面指南.md]
+  需求精炼器.md: [使用手册.md]
+  分析基础设施.md: [使用手册.md]

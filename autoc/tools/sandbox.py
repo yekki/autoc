@@ -808,13 +808,17 @@ class DockerSandbox:
         """终止容器内所有用户启动的进程（保留 tail -f /dev/null 守护进程和 Action Server）"""
         if not self._container_id:
             return
-        # 逐进程检查，跳过 action_server，避免误杀持久 bash 通道
+        # SIGTERM → 等 0.5s → SIGKILL 兜底，确保进程真正退出
         self._exec_in_container(
             "for pid in $(pgrep -f 'python|flask|uvicorn|node|npm' 2>/dev/null); do "
             "  cmd=$(cat /proc/$pid/cmdline 2>/dev/null | tr '\\0' ' '); "
             "  echo \"$cmd\" | grep -q 'action_server' || kill $pid 2>/dev/null; "
+            "done; sleep 0.5; "
+            "for pid in $(pgrep -f 'python|flask|uvicorn|node|npm' 2>/dev/null); do "
+            "  cmd=$(cat /proc/$pid/cmdline 2>/dev/null | tr '\\0' ' '); "
+            "  echo \"$cmd\" | grep -q 'action_server' || kill -9 $pid 2>/dev/null; "
             "done; true",
-            timeout=5,
+            timeout=8,
         )
         self._bg_pids.clear()
 

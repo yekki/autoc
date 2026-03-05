@@ -326,6 +326,10 @@ export const createSseSlice = (set, get) => ({
         if (data?.available && data?.url) {
           updates.activeTab = 'preview'
         }
+        // CLI 试运行（无 URL）不经过 applyEvent 通用处理器，在此直接写入
+        if (data?.available && !data?.url) {
+          updates.executionPreview = data
+        }
         break
 
       case 'preview_stopped':

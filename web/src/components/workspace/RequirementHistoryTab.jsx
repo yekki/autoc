@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import { Tag, Button, Popconfirm, Empty, Collapse } from 'antd'
 import {
   CheckCircleFilled, CloseCircleFilled, MinusCircleOutlined,
@@ -7,15 +7,17 @@ import {
   CaretRightOutlined, BugOutlined, SyncOutlined,
   EditOutlined, PlusCircleOutlined, RocketOutlined,
 } from '@ant-design/icons'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import useStore from '../../stores/useStore'
 import * as api from '../../services/api'
 import { formatTokenCount } from './helpers'
 
 const AGENT_COLORS = {
-  refiner: '#8b949e', pm: '#58a6ff', dev: '#3fb950',
-  developer: '#3fb950', test: '#d29922', tester: '#d29922', system: '#8b949e',
+  refiner: '#8b949e', helper: '#58a6ff', coder: '#3fb950', dev: '#3fb950',
+  developer: '#3fb950', critique: '#d29922', test: '#d29922', tester: '#d29922', system: '#8b949e',
 }
-const AGENT_LABEL = { refiner: '优化', pm: 'PM', dev: '开发', test: '测试', developer: '开发', tester: '测试' }
+const AGENT_LABEL = { refiner: '优化', helper: '辅助 AI', planner: '规划', coder: 'Coder AI', dev: 'Coder AI', critique: 'Critique AI', test: 'Critique AI', developer: 'Coder AI', tester: 'Critique AI' }
 
 const OP_CONFIG = {
   'resume':      { label: '恢复执行', color: '#58a6ff', icon: <SyncOutlined style={{ fontSize: 10 }} /> },
@@ -94,10 +96,12 @@ function buildGroups(sessions, fallbackRequirement) {
 
 const REQ_COLLAPSED_HEIGHT = 60
 
-function RequirementText({ text, isDark, defaultExpanded }) {
+function RequirementText({ text, isDark, defaultExpanded, sectionKey }) {
   const contentRef = useRef(null)
   const [overflows, setOverflows] = useState(false)
-  const [expanded, setExpanded] = useState(false)
+  const storedExpanded = useStore(s => s.collapsedSections[sectionKey])
+  const setSectionCollapsed = useStore(s => s.setSectionCollapsed)
+  const expanded = storedExpanded === undefined ? false : !storedExpanded
 
   useEffect(() => {
     if (defaultExpanded || !contentRef.current) return
@@ -111,19 +115,20 @@ function RequirementText({ text, isDark, defaultExpanded }) {
     <div style={{ position: 'relative', marginBottom: 8 }}>
       <div
         ref={contentRef}
+        className="requirement-markdown"
         style={{
-          fontSize: 13, lineHeight: 1.7, fontWeight: 500,
+          fontSize: 13, lineHeight: 1.7,
           color: isDark ? '#e6edf3' : '#1f2328',
           padding: '8px 12px',
           background: isDark ? '#161b22' : '#f6f8fa',
           borderRadius: 8,
           border: `1px solid ${isDark ? '#21262d' : '#e1e4e8'}`,
-          whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+          wordBreak: 'break-word',
           maxHeight: isOpen ? 'none' : REQ_COLLAPSED_HEIGHT,
           overflow: isOpen ? 'visible' : 'hidden',
         }}
       >
-        {text}
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
       </div>
       {collapsed && (
         <div style={{
@@ -132,7 +137,7 @@ function RequirementText({ text, isDark, defaultExpanded }) {
           borderRadius: '0 0 8px 8px',
           display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 2,
         }}>
-          <Button type="link" size="small" onClick={() => setExpanded(true)}
+          <Button type="link" size="small" onClick={() => setSectionCollapsed(sectionKey, false)}
             style={{ fontSize: 11, padding: 0, height: 'auto', color: isDark ? '#58a6ff' : '#0969da' }}>
             展开全部
           </Button>
@@ -140,7 +145,7 @@ function RequirementText({ text, isDark, defaultExpanded }) {
       )}
       {!defaultExpanded && expanded && overflows && (
         <div style={{ textAlign: 'center', marginTop: 2 }}>
-          <Button type="link" size="small" onClick={() => setExpanded(false)}
+          <Button type="link" size="small" onClick={() => setSectionCollapsed(sectionKey, true)}
             style={{ fontSize: 11, padding: 0, height: 'auto', color: isDark ? '#58a6ff' : '#0969da' }}>
             收起
           </Button>
@@ -229,6 +234,108 @@ function SessionCard({ session, isDark, onDelete }) {
   )
 }
 
+function RequirementGroup({ group, gIdx, isCurrent, isDark, onDelete }) {
+  const successCount = group.sessions.filter(s => s.success === true || s.status === 'completed').length
+  const failCount = group.sessions.filter(s => s.success === false || s.status === 'failed').length
+  const total = group.sessions.length
+  const totalTokens = group.sessions.reduce((sum, s) => sum + (s.total_tokens || 0), 0)
+
+  const collapseKey = `history-sessions-${gIdx}`
+  const storedCollapsed = useStore(s => s.collapsedSections[collapseKey])
+  const setSectionCollapsed = useStore(s => s.setSectionCollapsed)
+  const sessionsOpen = storedCollapsed === undefined ? isCurrent : !storedCollapsed
+
+  const dateRange = (() => {
+    if (!group.firstTime) return ''
+    const fmt = (t) => new Date(t * 1000).toLocaleString('zh-CN', {
+      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    })
+    const first = fmt(group.firstTime)
+    const last = fmt(group.latestTime)
+    return first === last ? first : `${first} ~ ${last}`
+  })()
+
+  return (
+    <div style={{
+      marginBottom: 16,
+      background: isDark ? '#0d1117' : '#fff',
+      border: `1px solid ${isCurrent ? (isDark ? '#1f6feb' : '#0969da') : (isDark ? '#21262d' : '#e1e4e8')}`,
+      borderRadius: 10, overflow: 'hidden',
+    }}>
+      <div style={{ padding: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+          <Tag color={isCurrent ? 'blue' : 'default'} style={{ margin: 0, fontSize: 10 }}>
+            {isCurrent ? '当前需求' : '历史需求'}
+          </Tag>
+          <span style={{ fontSize: 11, color: isDark ? '#6e7681' : '#8c959f' }}>{dateRange}</span>
+          <span style={{ fontSize: 11, color: isDark ? '#8b949e' : '#656d76' }}>
+            {total} 次执行
+            {successCount > 0 && <span style={{ color: '#3fb950', marginLeft: 4 }}>{successCount} 成功</span>}
+            {failCount > 0 && <span style={{ color: '#f85149', marginLeft: 4 }}>{failCount} 失败</span>}
+          </span>
+          {totalTokens > 0 && (
+            <span style={{ fontSize: 11, color: isDark ? '#8b949e' : '#656d76', marginLeft: 'auto' }}>
+              <ThunderboltOutlined style={{ fontSize: 10, marginRight: 3 }} />
+              累计 {formatTokenCount(totalTokens)}
+            </span>
+          )}
+        </div>
+
+        <RequirementText
+          text={group.requirement} isDark={isDark} defaultExpanded={isCurrent}
+          sectionKey={`history-req-text-${gIdx}`}
+        />
+
+        {group.tech_stack?.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 4 }}>
+            {group.tech_stack.map((t) => (
+              <Tag key={t} style={{
+                margin: 0, fontSize: 10, lineHeight: '18px',
+                background: isDark ? '#1c2128' : '#eef1f5',
+                borderColor: isDark ? '#30363d' : '#d0d7de',
+                color: isDark ? '#8b949e' : '#656d76',
+              }}>{t}</Tag>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <Collapse
+        ghost size="small"
+        activeKey={sessionsOpen ? ['sessions'] : []}
+        onChange={(keys) => setSectionCollapsed(collapseKey, !keys.includes('sessions'))}
+        expandIcon={({ isActive }) => <CaretRightOutlined rotate={isActive ? 90 : 0} style={{ fontSize: 10 }} />}
+        style={{ borderTop: `1px solid ${isDark ? '#21262d' : '#e1e4e8'}` }}
+        items={[{
+          key: 'sessions',
+          label: (
+            <span style={{ fontSize: 11, color: isDark ? '#8b949e' : '#656d76' }}>
+              执行记录（{total}）
+              {successCount > 0 && failCount > 0 && (
+                <span style={{ marginLeft: 8 }}>
+                  成功率 {Math.round(successCount / total * 100)}%
+                </span>
+              )}
+            </span>
+          ),
+          children: (
+            <div style={{ padding: '0 4px' }}>
+              {group.sessions.map((session) => (
+                <SessionCard
+                  key={session.session_id}
+                  session={session}
+                  isDark={isDark}
+                  onDelete={onDelete}
+                />
+              ))}
+            </div>
+          ),
+        }]}
+      />
+    </div>
+  )
+}
+
 export default function RequirementHistoryTab() {
   const theme = useStore(s => s.theme)
   const isDark = theme === 'dark'
@@ -246,7 +353,7 @@ export default function RequirementHistoryTab() {
   const visibleSessions = pastSessions.filter(s => !deletedSessions.has(s.session_id))
 
   const fallbackReq = useMemo(() => {
-    const proj = projects.find(p => p.name === selectedProjectName)
+    const proj = projects.find(p => p.folder === selectedProjectName)
     return proj?.description || executionRequirement || ''
   }, [projects, selectedProjectName, executionRequirement])
 
@@ -290,103 +397,16 @@ export default function RequirementHistoryTab() {
         </Popconfirm>
       </div>
 
-      {groups.map((group, gIdx) => {
-        const isCurrent = gIdx === 0
-        const successCount = group.sessions.filter(s => s.success === true || s.status === 'completed').length
-        const failCount = group.sessions.filter(s => s.success === false || s.status === 'failed').length
-        const total = group.sessions.length
-        const totalTokens = group.sessions.reduce((sum, s) => sum + (s.total_tokens || 0), 0)
-
-        const dateRange = (() => {
-          if (!group.firstTime) return ''
-          const fmt = (t) => new Date(t * 1000).toLocaleString('zh-CN', {
-            month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-          })
-          const first = fmt(group.firstTime)
-          const last = fmt(group.latestTime)
-          return first === last ? first : `${first} ~ ${last}`
-        })()
-
-        return (
-          <div key={gIdx} style={{
-            marginBottom: 16,
-            background: isDark ? '#0d1117' : '#fff',
-            border: `1px solid ${isCurrent ? (isDark ? '#1f6feb' : '#0969da') : (isDark ? '#21262d' : '#e1e4e8')}`,
-            borderRadius: 10, overflow: 'hidden',
-          }}>
-            <div style={{ padding: 16 }}>
-              {/* 头部：标签 + 统计 */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-                <Tag color={isCurrent ? 'blue' : 'default'} style={{ margin: 0, fontSize: 10 }}>
-                  {isCurrent ? '当前需求' : '历史需求'}
-                </Tag>
-                <span style={{ fontSize: 11, color: isDark ? '#6e7681' : '#8c959f' }}>{dateRange}</span>
-                <span style={{ fontSize: 11, color: isDark ? '#8b949e' : '#656d76' }}>
-                  {total} 次执行
-                  {successCount > 0 && <span style={{ color: '#3fb950', marginLeft: 4 }}>{successCount} 成功</span>}
-                  {failCount > 0 && <span style={{ color: '#f85149', marginLeft: 4 }}>{failCount} 失败</span>}
-                </span>
-                {totalTokens > 0 && (
-                  <span style={{ fontSize: 11, color: isDark ? '#8b949e' : '#656d76', marginLeft: 'auto' }}>
-                    <ThunderboltOutlined style={{ fontSize: 10, marginRight: 3 }} />
-                    累计 {formatTokenCount(totalTokens)}
-                  </span>
-                )}
-              </div>
-
-              {/* 需求正文 */}
-              <RequirementText text={group.requirement} isDark={isDark} defaultExpanded={isCurrent} />
-
-              {/* 技术栈 */}
-              {group.tech_stack?.length > 0 && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 4 }}>
-                  {group.tech_stack.map((t) => (
-                    <Tag key={t} style={{
-                      margin: 0, fontSize: 10, lineHeight: '18px',
-                      background: isDark ? '#1c2128' : '#eef1f5',
-                      borderColor: isDark ? '#30363d' : '#d0d7de',
-                      color: isDark ? '#8b949e' : '#656d76',
-                    }}>{t}</Tag>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* 执行记录折叠 */}
-            <Collapse
-              ghost size="small"
-              defaultActiveKey={isCurrent ? ['sessions'] : []}
-              expandIcon={({ isActive }) => <CaretRightOutlined rotate={isActive ? 90 : 0} style={{ fontSize: 10 }} />}
-              style={{ borderTop: `1px solid ${isDark ? '#21262d' : '#e1e4e8'}` }}
-              items={[{
-                key: 'sessions',
-                label: (
-                  <span style={{ fontSize: 11, color: isDark ? '#8b949e' : '#656d76' }}>
-                    执行记录（{total}）
-                    {successCount > 0 && failCount > 0 && (
-                      <span style={{ marginLeft: 8 }}>
-                        成功率 {Math.round(successCount / total * 100)}%
-                      </span>
-                    )}
-                  </span>
-                ),
-                children: (
-                  <div style={{ padding: '0 4px' }}>
-                    {group.sessions.map((session) => (
-                      <SessionCard
-                        key={session.session_id}
-                        session={session}
-                        isDark={isDark}
-                        onDelete={handleDeleteSession}
-                      />
-                    ))}
-                  </div>
-                ),
-              }]}
-            />
-          </div>
-        )
-      })}
+      {groups.map((group, gIdx) => (
+        <RequirementGroup
+          key={gIdx}
+          group={group}
+          gIdx={gIdx}
+          isCurrent={gIdx === 0}
+          isDark={isDark}
+          onDelete={handleDeleteSession}
+        />
+      ))}
     </div>
   )
 }

@@ -75,6 +75,7 @@ export function buildEventContext(source) {
     },
     executionFiles: source.executionFiles || [],
     planningProgress: source.planningProgress || null,
+    executionPreview: source.executionPreview || null,
     executionFailure: source.executionFailure || null,
     executionSummary: source.executionSummary || null,
     _lastErrorMessage: source._lastErrorMessage || '',
@@ -290,7 +291,12 @@ export function applyEvent(type, data, ctx) {
       break
 
     case 'preview_ready':
-      updates.executionPreview = data || null
+      // 只有带 URL 的 Web 预览才通过通用处理器写入状态；
+      // CLI 试运行结果（无 URL）是临时性的，仅在 SSE 实时流中由 sseSlice 写入，
+      // 不进入历史回放，防止旧的 cli_tool 结果在刷新后覆盖正确的 Web 预览
+      if (data?.url) {
+        updates.executionPreview = data
+      }
       break
 
     case 'execution_failed':

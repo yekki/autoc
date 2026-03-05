@@ -61,6 +61,7 @@ class PreviewInfo:
     runtime: str = "local"
     message: str = ""
     files_hint: list[str] = field(default_factory=list)
+    framework: str = ""  # flask / fastapi / django / node / vite / go / static / ""
 
 
 def _find_free_port() -> int:
@@ -136,42 +137,49 @@ class ProjectTypeDetector:
             port = _find_free_port()
             return ProjectType.WEB_FULLSTACK, f"python manage.py runserver 0.0.0.0:{port}", port
 
-        # 4) Flask / FastAPI / 其他 Python Web（优先检查 app.py / main.py）
-        for py_file in (app_py, main_py):
-            if os.path.isfile(py_file):
-                try:
-                    with open(py_file, encoding="utf-8") as _fp:
-                        content = _fp.read(4096)
-                except OSError:
-                    continue
+        # 4) Flask / FastAPI / 其他 Python Web（优先检查 app.py / main.py 文件 + app/ 包）
+        _web_candidates = list((app_py, main_py))
+        # app/ 包目录：如果 app.py 不存在但 app/ 目录有 __init__.py，也作为候选
+        for _pkg in ("app", "application"):
+            _pkg_init = os.path.join(workspace_dir, _pkg, "__init__.py")
+            if os.path.isfile(_pkg_init) and not os.path.isfile(os.path.join(workspace_dir, f"{_pkg}.py")):
+                _web_candidates.append(_pkg_init)
 
-                # GUI 框架检测优先于 CLI 判断，避免把游戏/桌面应用误识别为 CLI 工具
-                if _GUI_FRAMEWORK_RE.search(content):
-                    return ProjectType.GUI_APP, "", 0
+        for py_file in _web_candidates:
+            if not os.path.isfile(py_file):
+                continue
+            try:
+                with open(py_file, encoding="utf-8") as _fp:
+                    content = _fp.read(4096)
+            except OSError:
+                continue
 
-                if re.search(r"(Flask|FastAPI|Bottle|Tornado|Sanic)", content):
+            # GUI 框架检测优先于 CLI 判断，避免把游戏/桌面应用误识别为 CLI 工具
+            if _GUI_FRAMEWORK_RE.search(content):
+                return ProjectType.GUI_APP, "", 0
+
+            if re.search(r"(Flask|FastAPI|Bottle|Tornado|Sanic)", content):
+                # 包目录用目录名作为模块名（flask --app app），文件用文件名去 .py
+                if os.path.basename(py_file) == "__init__.py":
+                    module_name = os.path.basename(os.path.dirname(py_file))
+                else:
                     module_name = os.path.splitext(os.path.basename(py_file))[0]
-                    fname = os.path.basename(py_file)
-                    if "FastAPI" in content:
-                        port = _find_free_port()
-                        return ProjectType.WEB_BACKEND, f"python -m uvicorn {module_name}:app --host 0.0.0.0 --port {port} --reload", port
+                fname = f"{module_name}.py" if os.path.basename(py_file) != "__init__.py" else module_name
+                if "FastAPI" in content:
                     port = _find_free_port()
-                    has_run = re.search(r"\.run\s*\(", content)
-                    if has_run:
-                        return ProjectType.WEB_BACKEND, f"python {fname}", port
-                    return ProjectType.WEB_BACKEND, f"flask --app {module_name} run --host 0.0.0.0 --port {port} --debug", port
+                    return ProjectType.WEB_BACKEND, f"python -m uvicorn {module_name}:app --host 0.0.0.0 --port {port} --reload", port
+                port = _find_free_port()
+                return ProjectType.WEB_BACKEND, f"flask --app {module_name} run --host 0.0.0.0 --port {port} --debug", port
 
-                if re.search(r"(argparse|click|typer|sys\.argv)", content):
-                    # 如果同时存在 frontend/backend 子目录（Monorepo），不在此处返回 CLI_TOOL，
-                    # 让步骤 5 的 Monorepo 检测优先判断
-                    _fe_dirs = {"frontend", "client", "web", "ui"}
-                    _be_dirs = {"backend", "server", "api"}
-                    try:
-                        _subs = set(os.listdir(workspace_dir))
-                    except OSError:
-                        _subs = set()
-                    if not (_subs & _fe_dirs and _subs & _be_dirs):
-                        return ProjectType.CLI_TOOL, f"python {os.path.basename(py_file)} --help", 0
+            if re.search(r"(argparse|click|typer|sys\.argv)", content):
+                _fe_dirs = {"frontend", "client", "web", "ui"}
+                _be_dirs = {"backend", "server", "api"}
+                try:
+                    _subs = set(os.listdir(workspace_dir))
+                except OSError:
+                    _subs = set()
+                if not (_subs & _fe_dirs and _subs & _be_dirs):
+                    return ProjectType.CLI_TOOL, f"python {os.path.basename(py_file)} --help", 0
 
         # 5) Monorepo: frontend/backend 分目录结构（在扫描根 .py 文件之前检测，避免辅助脚本误判）
         monorepo_result = ProjectTypeDetector._detect_monorepo(workspace_dir)
@@ -213,6 +221,28 @@ class ProjectTypeDetector:
             if re.search(r"(argparse|click|typer|sys\.argv)", content):
                 return ProjectType.CLI_TOOL, f"python {fname} --help", 0
             if re.search(r'if\s+__name__\s*==\s*["\']__main__["\']', content):
+                # 含 .run() 调用时可能是间接引用 web 框架（如 from app import create_app）
+                run_match = re.search(r"\.run\s*\(", content)
+                if run_match:
+                    is_web = False
+                    # 层 1：requirements.txt 显式列出 web 框架
+                    if os.path.isfile(req_txt):
+                        try:
+                            with open(req_txt, encoding="utf-8") as _rp:
+                                _req_content = _rp.read(2048).lower()
+                            if any(kw in _req_content for kw in ("flask", "fastapi", "django", "uvicorn", "sanic")):
+                                is_web = True
+                        except OSError:
+                            pass
+                    # 层 2：.run() 参数含 web 特征（debug=/host=/port=）
+                    if not is_web and re.search(r"\.run\s*\([^)]*(?:debug|host|port)\s*=", content):
+                        is_web = True
+                    # 层 3：工作区其他 .py 文件直接导入 web 框架
+                    if not is_web:
+                        is_web = ProjectTypeDetector._workspace_has_web_framework(workspace_dir, exclude=fname)
+                    if is_web:
+                        port = _find_free_port()
+                        return ProjectType.WEB_BACKEND, f"python {fname}", port
                 return ProjectType.CLI_TOOL, f"python {fname} --help", 0
 
         # 7) 有 requirements.txt 但未匹配上面的规则 → 检查依赖推断类型
@@ -279,6 +309,48 @@ class ProjectTypeDetector:
             return ProjectType.CLI_TOOL, f"python {fname}", 0
 
         return ProjectType.UNKNOWN, "", 0
+
+    @staticmethod
+    def _workspace_has_web_framework(workspace_dir: str, exclude: str = "") -> bool:
+        """扫描工作区根目录 .py 文件和常见包目录，判断是否有 Web 框架"""
+        _fw_re = re.compile(r"(Flask|FastAPI|Bottle|Tornado|Sanic)")
+
+        # 1) 根目录 .py 文件
+        try:
+            py_files = [f for f in os.listdir(workspace_dir)
+                        if f.endswith(".py") and f != exclude]
+        except OSError:
+            py_files = []
+        for f in py_files:
+            fpath = os.path.join(workspace_dir, f)
+            if not os.path.isfile(fpath):
+                continue
+            try:
+                with open(fpath, encoding="utf-8") as fp:
+                    src = fp.read(4096)
+            except OSError:
+                continue
+            if _fw_re.search(src):
+                return True
+
+        # 2) 常见包目录的 __init__.py / app.py / main.py
+        for pkg in ("app", "application", "src", "server", "api"):
+            pkg_dir = os.path.join(workspace_dir, pkg)
+            if not os.path.isdir(pkg_dir):
+                continue
+            for entry in ("__init__.py", "app.py", "main.py"):
+                fpath = os.path.join(pkg_dir, entry)
+                if not os.path.isfile(fpath):
+                    continue
+                try:
+                    with open(fpath, encoding="utf-8") as fp:
+                        src = fp.read(4096)
+                except OSError:
+                    continue
+                if _fw_re.search(src):
+                    return True
+
+        return False
 
     @staticmethod
     def _detect_monorepo(workspace_dir: str) -> tuple[ProjectType, str, int] | None:
@@ -483,10 +555,13 @@ class PreviewManager:
         if not port:
             port = detected_port or find_free_port()
 
+        framework = self._detect_framework(command)
+
         if not command:
             info = PreviewInfo(
                 available=False,
                 project_type=project_type,
+                framework=framework,
                 message="未检测到可运行的项目类型",
             )
             self._preview_info = info
@@ -496,9 +571,9 @@ class PreviewManager:
         self._install_deps_if_needed()
 
         logger.info(f"[预览] 本地启动: {command} (端口 {port})")
+        log_path = os.path.join(self.workspace_dir, ".autoc", "preview.log")
         try:
             env = {**os.environ, "PORT": str(port)}
-            log_path = os.path.join(self.workspace_dir, ".autoc", "preview.log")
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
             self._log_file = open(log_path, "w")
             self._process = subprocess.Popen(
@@ -513,6 +588,7 @@ class PreviewManager:
             info = PreviewInfo(
                 available=False,
                 project_type=project_type,
+                framework=framework,
                 message=f"启动失败: {e}",
             )
             self._preview_info = info
@@ -536,21 +612,58 @@ class PreviewManager:
                 command=command,
                 pid=str(self._process.pid),
                 runtime="local",
+                framework=framework,
                 message=f"本地预览已启动: {url}" if reachable else f"预览已启动但可能存在端口冲突: {url}",
             )
             self._preview_info = info
             self._emit(
                 preview_url=url, port=port, command=command,
                 project_type=project_type.value, runtime="local",
+                framework=framework,
             )
             return info
+
+        # 预期端口未就绪 → 从日志检测实际端口
+        actual_port = port
+        try:
+            with open(log_path, "r", encoding="utf-8") as f:
+                log_content = f.read(4096)
+            framework = self._refine_framework_from_logs(log_content, framework)
+            actual = self._detect_actual_port_from_logs(log_content)
+            if actual and actual[1] != port:
+                actual_port = actual[1]
+                logger.info(f"[预览] 日志检测到实际端口: {actual_port}（预期 {port}）")
+                if self._wait_for_port(actual_port, retries=10, interval=0.5):
+                    url = f"http://localhost:{actual_port}"
+                    info = PreviewInfo(
+                        available=True,
+                        project_type=project_type,
+                        url=url,
+                        host="localhost",
+                        port=actual_port,
+                        command=command,
+                        pid=str(self._process.pid),
+                        runtime="local",
+                        framework=framework,
+                        message=f"本地预览已启动: {url}",
+                    )
+                    self._preview_info = info
+                    self._emit(
+                        preview_url=url, port=actual_port, command=command,
+                        project_type=project_type.value, runtime="local",
+                        framework=framework,
+                    )
+                    return info
+        except Exception:
+            pass
 
         info = PreviewInfo(
             available=False,
             project_type=project_type,
             command=command,
-            port=port,
+            port=actual_port,
             runtime="local",
+            framework=framework,
             message="Dev server 启动超时，端口未就绪",
         )
         self._preview_info = info
@@ -639,16 +752,32 @@ class PreviewManager:
         command = self._patch_host_binding(command)
 
         # 在容器内启动后台进程
+        framework = self._detect_framework(command)
         pid = sandbox.execute_background(command)
         if pid.startswith("["):
             info = PreviewInfo(
                 available=False,
                 project_type=project_type,
                 runtime="docker",
+                framework=framework,
                 message=f"容器内启动失败: {pid}",
             )
             self._preview_info = info
             return info
+
+        # 等 dev server 输出初始日志，从中检测实际端口和绑定地址
+        time.sleep(2)
+        bg_log = sandbox.get_background_log(30)
+        framework = self._refine_framework_from_logs(bg_log, framework)
+        actual = self._detect_actual_port_from_logs(bg_log)
+        if actual:
+            actual_host, actual_port = actual
+            logger.info(
+                f"[预览] 日志检测到实际端口: {actual_host}:{actual_port}（预期 {container_port}）"
+            )
+            self._fix_port_mismatch_in_container(
+                sandbox, container_port, actual_host, actual_port,
+            )
 
         # sandbox 操作可能触发端口重新映射，从最新状态读取 host_port
         host_port = next(
@@ -656,7 +785,7 @@ class PreviewManager:
             host_port,
         )
 
-        # 等待容器内 dev server 端口就绪
+        # 等待容器内 dev server 端口就绪（socat 转发后检测 container_port）
         if sandbox.check_port_ready(container_port):
             url = f"http://localhost:{host_port}"
             info = PreviewInfo(
@@ -668,12 +797,14 @@ class PreviewManager:
                 command=command,
                 pid=pid,
                 runtime="docker",
+                framework=framework,
                 message=f"Docker 预览已启动: {url}",
             )
             self._preview_info = info
             self._emit(
                 preview_url=url, port=host_port, command=command,
                 project_type=project_type.value, runtime="docker",
+                framework=framework,
             )
             return info
 
@@ -684,6 +815,7 @@ class PreviewManager:
             command=command,
             port=container_port,
             runtime="docker",
+            framework=framework,
             message=f"Dev server 启动超时\n{bg_log}",
         )
         self._preview_info = info
@@ -703,11 +835,14 @@ class PreviewManager:
         if not port:
             port = detected_port or 8000
 
+        framework = self._detect_framework(command)
+
         if not command:
             info = PreviewInfo(
                 available=False,
                 project_type=project_type,
                 runtime="cloud",
+                framework=framework,
                 message="未检测到可运行的项目类型",
             )
             self._preview_info = info
@@ -726,12 +861,14 @@ class PreviewManager:
                 command=command,
                 pid=str(pid),
                 runtime="cloud",
+                framework=framework,
                 message=f"云端预览已启动: {preview_url}",
             )
             self._preview_info = info
             self._emit(
                 preview_url=preview_url, port=port, command=command,
                 project_type=project_type.value, runtime="cloud",
+                framework=framework,
             )
             return info
         except Exception as e:
@@ -739,6 +876,7 @@ class PreviewManager:
                 available=False,
                 project_type=project_type,
                 runtime="cloud",
+                framework=framework,
                 message=f"云沙箱启动失败: {e}",
             )
             self._preview_info = info
@@ -761,6 +899,16 @@ class PreviewManager:
                 message="Docker 沙箱不可用，无法执行 CLI 试运行",
             )
 
+        # 清理容器内残留进程：Dev 阶段可能启动过 dev server 仍占端口
+        try:
+            sandbox.kill_user_processes()
+            for _cp in (3000, 5000, 5173, 8000, 8080):
+                sandbox._exec_in_container(
+                    f"fuser -k {_cp}/tcp 2>/dev/null; true", timeout=3,
+                )
+        except Exception:
+            pass
+
         logger.info(f"[预览] CLI 试运行（沙箱）: {command}")
         output = sandbox.execute(command, timeout=30)
 
@@ -779,6 +927,122 @@ class PreviewManager:
         return info
 
     # ==================== 工具方法 ====================
+
+    # 从 dev server 启动日志中提取实际 host:port 的正则模式
+    _LOG_PORT_PATTERNS = [
+        # Flask/Werkzeug: " * Running on http://127.0.0.1:5000"
+        re.compile(r"Running on\s+(?:https?://)?([\w.]+):(\d+)"),
+        # Uvicorn (FastAPI): "Uvicorn running on http://0.0.0.0:8000"
+        re.compile(r"Uvicorn running on\s+(?:https?://)?([\w.]+):(\d+)"),
+        # Django: "Starting development server at http://0.0.0.0:8000/"
+        re.compile(r"development server at\s+(?:https?://)?([\w.]+):(\d+)"),
+        # Vite: "  ➜  Local:   http://localhost:5173/"
+        re.compile(r"Local:\s+(?:https?://)?([\w.]+):(\d+)"),
+        # Go/Gin/Echo/Fiber: "Listening and serving HTTP on :8080"
+        re.compile(r"(?:serving|listening)\s+(?:\w+\s+)?on\s+(?:https?://)?([\w.]*):(\d+)", re.IGNORECASE),
+    ]
+
+    @staticmethod
+    def _detect_actual_port_from_logs(log_text: str) -> tuple[str, int] | None:
+        """从 dev server 启动日志中解析实际监听的 (host, port)"""
+        for pat in PreviewManager._LOG_PORT_PATTERNS:
+            m = pat.search(log_text)
+            if m:
+                return m.group(1), int(m.group(2))
+        # 兜底: "listening on port 3000" / "Server started on port 8080"
+        m = re.search(r"(?:listening|started)\s+on\s+(?:port\s+)?:?(\d+)", log_text, re.IGNORECASE)
+        if m:
+            return "", int(m.group(1))
+        return None
+
+    @staticmethod
+    def _detect_framework(command: str) -> str:
+        """从启动命令推断 Web 框架名"""
+        cmd = command.lower()
+        if "flask" in cmd:
+            return "flask"
+        if "uvicorn" in cmd:
+            return "fastapi"
+        if "manage.py" in cmd and "runserver" in cmd:
+            return "django"
+        if "vite" in cmd or "vue" in cmd:
+            return "vite"
+        if any(kw in cmd for kw in ("npm", "npx", "node ", "next", "nuxt")):
+            return "node"
+        if "http.server" in cmd:
+            return "static"
+        if "go run" in cmd:
+            return "go"
+        return ""
+
+    @staticmethod
+    def _refine_framework_from_logs(log_text: str, current: str) -> str:
+        """日志中含框架指纹时修正 framework（覆盖 python app.py 无法从命令推断的场景）"""
+        if current:
+            return current
+        if "Serving Flask app" in log_text or "Running on" in log_text:
+            return "flask"
+        if "Uvicorn running on" in log_text:
+            return "fastapi"
+        if "development server" in log_text and "django" in log_text.lower():
+            return "django"
+        return current
+
+    def _fix_port_mismatch_in_container(
+        self, sandbox, container_port: int, actual_host: str, actual_port: int,
+    ) -> bool:
+        """容器内实际端口/绑定地址与预期不符时，用 socat 转发修复。
+
+        成功建立转发返回 True，无需转发或失败返回 False。
+        """
+        port_mismatch = actual_port != container_port
+        host_mismatch = actual_host in ("127.0.0.1", "localhost")
+
+        if not port_mismatch and not host_mismatch:
+            return False
+
+        if port_mismatch:
+            logger.warning(
+                f"[预览] 端口不匹配: 预期 {container_port}, 实际 {actual_port}"
+            )
+        if host_mismatch:
+            logger.warning(
+                f"[预览] 绑定 {actual_host}, Docker 需要 0.0.0.0"
+            )
+
+        # 确保 socat 可用
+        sandbox._exec_in_container(
+            "which socat >/dev/null 2>&1 || "
+            "(apt-get update -qq && apt-get install -y -qq socat 2>/dev/null || "
+            "apk add --no-cache socat 2>/dev/null) || true",
+            timeout=30,
+        )
+
+        target = f"127.0.0.1:{actual_port}"
+        if port_mismatch:
+            # 端口不同：安全绑定 0.0.0.0:container_port
+            socat_cmd = (
+                f"socat TCP-LISTEN:{container_port},fork,reuseaddr "
+                f"TCP:{target}"
+            )
+        else:
+            # 端口相同但绑定 127.0.0.1：绑定到容器的非回环 IP
+            socat_cmd = (
+                f"BIND_IP=$(hostname -i 2>/dev/null | awk '{{print $1}}'); "
+                f"socat TCP-LISTEN:{container_port},fork,reuseaddr,bind=$BIND_IP "
+                f"TCP:{target}"
+            )
+
+        rc, out = sandbox._exec_in_container(f"({socat_cmd}) &", timeout=5)
+        if rc == 0:
+            logger.info(
+                f"[预览] socat 转发: :{container_port} → {target}"
+            )
+            time.sleep(0.5)
+            return True
+        else:
+            logger.warning(f"[预览] socat 启动失败: {out}")
+            return False
 
     @classmethod
     def _pick_premapped_port(cls, sandbox, excluded_port: int = 0) -> int | None:

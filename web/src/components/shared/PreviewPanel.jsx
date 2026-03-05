@@ -5,7 +5,7 @@ import {
   LinkOutlined, CloudServerOutlined, DesktopOutlined, StopOutlined,
   PlayCircleOutlined, PoweroffOutlined, ApiOutlined, RocketOutlined,
   SyncOutlined, SettingOutlined, PlusOutlined, DeleteOutlined,
-  EyeOutlined, EyeInvisibleOutlined,
+  EyeOutlined, EyeInvisibleOutlined, CheckCircleFilled,
 } from '@ant-design/icons'
 import * as api from '../../services/api'
 import useStore from '../../stores/useStore'
@@ -39,11 +39,22 @@ const TYPE_META = {
   cli_tool: { icon: <TerminalIcon />, color: '#fa8c16', tagColor: 'orange', desc: '命令行工具，可运行查看使用说明' },
 }
 
-const API_PREVIEW_PATHS = [
+const FASTAPI_PATHS = [
   { key: 'docs', label: 'Swagger UI', path: '/docs' },
   { key: 'redoc', label: 'ReDoc', path: '/redoc' },
   { key: 'root', label: 'API 根路径', path: '' },
 ]
+
+const GENERIC_API_PATHS = [
+  { key: 'health', label: '健康检查', path: '/health' },
+  { key: 'api', label: '/api', path: '/api' },
+  { key: 'root', label: '根路径', path: '' },
+]
+
+function getApiPaths(framework) {
+  if (framework === 'fastapi') return FASTAPI_PATHS
+  return GENERIC_API_PATHS
+}
 
 function EmptyDetectedState({ detected, isDark, starting, onStart }) {
   const { project_type, command } = detected
@@ -263,7 +274,7 @@ export default function PreviewPanel({ preview, isRunning, isDark, height = 400,
   const [detected, setDetected] = useState(null)
   const [detecting, setDetecting] = useState(false)
   const [autoStartAttempted, setAutoStartAttempted] = useState(false)
-  const [apiPathKey, setApiPathKey] = useState('docs')
+  const [apiPathKey, setApiPathKey] = useState('root')
 
   // preview_ready 触发新预览时自动刷新 iframe，避免浏览器缓存旧内容
   useEffect(() => {
@@ -274,39 +285,65 @@ export default function PreviewPanel({ preview, isRunning, isDark, height = 400,
   }, [preview])
 
   useEffect(() => {
-    if (preview || isRunning || !projectName || detected) return
+    if (isRunning || !projectName || detected) return
+    // 有 URL 的 Web 预览说明服务正在运行，信任它
+    if (preview?.url) return
+    // 无 URL 的预览（CLI 历史残留）或无预览 → 都需要重新检测
     let cancelled = false
     setDetecting(true)
     api.detectPreviewType(projectName)
-      .then((r) => { if (!cancelled) setDetected(r) })
+      .then((r) => {
+        if (cancelled) return
+        setDetected(r)
+        // 历史残留类型与实际检测不符 → 清除过期预览
+        if (preview && !preview.url && r.project_type !== preview.project_type) {
+          useStore.setState({ executionPreview: null })
+        }
+      })
       .catch(() => {})
       .finally(() => { if (!cancelled) setDetecting(false) })
     return () => { cancelled = true }
   }, [projectName, preview, isRunning, detected])
 
-  // SSE 推送新 preview 时清空 detected 缓存 + 重置 API 路径选择
+  // SSE 推送新 preview 时清空 detected 缓存 + 根据 framework 设置默认 tab
   useEffect(() => {
-    if (preview) { setDetected(null); setAutoStartAttempted(false); setApiPathKey('docs') }
+    if (preview) {
+      setDetected(null)
+      setAutoStartAttempted(false)
+      setApiPathKey(preview.framework === 'fastapi' ? 'docs' : 'health')
+    }
   }, [preview])
 
-  // web_backend: 探测 /docs 是否可达，不可达则回退到根路径
+  // 后端 API 路径自动探测：找到第一个能响应的路径
   useEffect(() => {
-    if (!preview?.url || preview.project_type !== 'web_backend' || apiPathKey !== 'docs') return
+    if (!preview?.url || preview.project_type !== 'web_backend') return
+    const fw = preview.framework || ''
+    const paths = fw === 'fastapi' ? FASTAPI_PATHS : GENERIC_API_PATHS
+    // 只在默认 key 时探测（用户手动切换的不覆盖）
+    const defaultKey = fw === 'fastapi' ? 'docs' : 'health'
+    if (apiPathKey !== defaultKey) return
+
     let cancelled = false
     const base = preview.url.replace(/\/+$/, '')
-    fetch(`${base}/docs`, { method: 'HEAD', mode: 'no-cors' })
-      .then((res) => {
-        // mode: no-cors 时 res.type === 'opaque'，status 为 0，只能判断是否抛异常
-        // 如果能走 cors 且返回 4xx/5xx，回退
-        if (!cancelled && res.type !== 'opaque' && !res.ok) {
-          setApiPathKey('root')
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setApiPathKey('root')
-      })
+
+    const tryPaths = async () => {
+      for (const p of paths) {
+        if (cancelled) return
+        try {
+          const res = await fetch(`${base}${p.path}`, { method: 'HEAD', mode: 'no-cors' })
+          // no-cors: opaque = 可达; cors: ok = 可达
+          if (res.type === 'opaque' || res.ok) {
+            if (!cancelled) setApiPathKey(p.key)
+            return
+          }
+        } catch { /* 继续下一个 */ }
+      }
+      // 全部不可达，兜底到根路径
+      if (!cancelled) setApiPathKey('root')
+    }
+    tryPaths()
     return () => { cancelled = true }
-  }, [preview, apiPathKey])
+  }, [preview])
 
   const handleIframeLoad = useCallback(() => {
     setIframeLoading(false)
@@ -424,92 +461,163 @@ export default function PreviewPanel({ preview, isRunning, isDark, height = 400,
     )
   }
 
-  const { available, url, project_type, command, runtime, message: msg, port } = preview
+  const { available, url, project_type, command, runtime, message: msg, port, framework } = preview
   const runtimeInfo = RUNTIME_LABELS[runtime] || RUNTIME_LABELS.local
   const typeLabel = TYPE_LABELS[project_type] || project_type
 
-  // Web 应用：iframe 预览
+  // Web 应用预览
   if (available && url) {
     const isBackendApi = project_type === 'web_backend'
+    const apiPaths = getApiPaths(framework)
     const baseUrl = url.replace(/\/+$/, '')
     const apiPathSuffix = isBackendApi
-      ? (API_PREVIEW_PATHS.find((p) => p.key === apiPathKey)?.path || '')
+      ? (apiPaths.find((p) => p.key === apiPathKey)?.path ?? '')
       : ''
     const displayUrl = `${baseUrl}${apiPathSuffix}`
 
-    const handleApiPathSwitch = (key) => {
-      setApiPathKey(key)
-      setIframeKey((k) => k + 1)
-      setIframeError(false)
-      setIframeLoading(true)
+    const previewToolbar = (
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, padding: '4px 0' }}>
+        <Space size={6}>
+          <Tag icon={runtimeInfo.icon} color={runtimeInfo.color} style={{ margin: 0 }}>{runtimeInfo.label}</Tag>
+          <Tag color="geekblue" style={{ margin: 0 }}>{typeLabel}</Tag>
+          <Text type="secondary" style={{ fontSize: 11 }}>{command}</Text>
+        </Space>
+        <Space size={4}>
+          <Tooltip title="刷新">
+            <Button size="small" icon={<ReloadOutlined />} onClick={() => { setIframeKey((k) => k + 1); setIframeError(false); setIframeLoading(true) }} />
+          </Tooltip>
+          {projectName && (
+            <Tooltip title="重启服务">
+              <Button size="small" icon={<SyncOutlined />} loading={restarting} onClick={handleRestartPreview} />
+            </Tooltip>
+          )}
+          {projectName && (
+            <Tooltip title="环境变量">
+              <Button size="small" icon={<SettingOutlined />} onClick={() => setEnvDrawerOpen(true)} />
+            </Tooltip>
+          )}
+          <Tooltip title="新窗口打开">
+            <Button size="small" icon={<ExpandOutlined />} onClick={() => window.open(displayUrl, '_blank')} />
+          </Tooltip>
+          {projectName && (
+            <Tooltip title="停止预览">
+              <Button size="small" danger icon={<PoweroffOutlined />} onClick={handleStopPreview} />
+            </Tooltip>
+          )}
+        </Space>
+      </div>
+    )
+
+    const envDrawer = (
+      <EnvVarsDrawer
+        open={envDrawerOpen}
+        onClose={() => setEnvDrawerOpen(false)}
+        projectName={projectName}
+        isDark={isDark}
+        onSaveAndRestart={handleRestartPreview}
+      />
+    )
+
+    // ── 后端 API：状态面板（替代无意义的 iframe JSON 展示）──
+    if (isBackendApi) {
+      const frameworkLabel = { flask: 'Flask', fastapi: 'FastAPI', django: 'Django', node: 'Node.js', go: 'Go' }[framework] || 'HTTP'
+      return (
+        <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+          {previewToolbar}
+
+          {/* 服务状态卡片 */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 12, padding: '16px 20px',
+            background: isDark ? '#0d2818' : '#f6ffed',
+            border: `1px solid ${isDark ? '#1a4d2e' : '#b7eb8f'}`,
+            borderRadius: 8, marginBottom: 12,
+          }}>
+            <CheckCircleFilled style={{ color: '#52c41a', fontSize: 28 }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 15, color: isDark ? '#f0f6fc' : '#1f2328' }}>
+                {frameworkLabel} API 服务运行中
+              </div>
+              <div style={{ fontSize: 12, color: isDark ? '#8b949e' : '#656d76', marginTop: 2 }}>
+                {url}{port > 0 ? ` · 端口 ${port}` : ''}
+              </div>
+            </div>
+            <Button
+              type="primary" size="small" icon={<ExpandOutlined />}
+              onClick={() => window.open(url, '_blank')}
+            >
+              打开 API
+            </Button>
+          </div>
+
+          {/* 可用端点 */}
+          <div style={{
+            flex: 1, overflow: 'auto',
+            background: isDark ? '#0d1117' : '#ffffff',
+            borderRadius: 8,
+            border: `1px solid ${isDark ? '#21262d' : '#d0d7de'}`,
+          }}>
+            <div style={{
+              padding: '10px 16px',
+              borderBottom: `1px solid ${isDark ? '#21262d' : '#d0d7de'}`,
+              fontSize: 13, fontWeight: 600,
+              color: isDark ? '#c9d1d9' : '#1f2328',
+            }}>
+              可用端点
+            </div>
+            <div style={{ padding: '8px 16px' }}>
+              {apiPaths.map((item) => (
+                <div
+                  key={item.key}
+                  onClick={() => window.open(`${baseUrl}${item.path}`, '_blank')}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '8px 12px', borderRadius: 6, cursor: 'pointer',
+                    marginBottom: 4,
+                    background: isDark ? 'transparent' : 'transparent',
+                    transition: 'background 0.15s',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = isDark ? '#161b22' : '#f6f8fa' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+                >
+                  <Tag color="blue" style={{ margin: 0, fontSize: 11, fontFamily: 'Menlo, Monaco, monospace' }}>
+                    GET
+                  </Tag>
+                  <span style={{
+                    fontFamily: 'Menlo, Monaco, Consolas, monospace',
+                    fontSize: 13, color: isDark ? '#79c0ff' : '#0550ae',
+                  }}>
+                    {item.path || '/'}
+                  </span>
+                  <span style={{ fontSize: 12, color: isDark ? '#8b949e' : '#656d76' }}>
+                    {item.label}
+                  </span>
+                  <ExpandOutlined style={{ marginLeft: 'auto', fontSize: 11, color: isDark ? '#484f58' : '#afb8c1' }} />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 提示：这是纯 API，没有前端页面 */}
+          <div style={{
+            marginTop: 10, padding: '10px 14px',
+            background: isDark ? '#1c1917' : '#fffbe6',
+            border: `1px solid ${isDark ? '#44403c' : '#ffe58f'}`,
+            borderRadius: 8, fontSize: 13, lineHeight: 1.6,
+            color: isDark ? '#d6d3d1' : '#78350f',
+          }}>
+            <div style={{ fontWeight: 600, marginBottom: 2 }}>💡 这是一个纯后端 API 服务</div>
+            <div>应用目前只有后端接口，没有可视化的前端页面。如需 Web 界面，在对话中告诉 AutoC「添加前端页面」即可自动生成。</div>
+          </div>
+
+          {envDrawer}
+        </div>
+      )
     }
 
+    // ── 前端 / 全栈应用：iframe 预览 ──
     return (
       <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, padding: '4px 0' }}>
-          <Space size={6}>
-            <Tag icon={runtimeInfo.icon} color={runtimeInfo.color} style={{ margin: 0 }}>{runtimeInfo.label}</Tag>
-            <Tag color="geekblue" style={{ margin: 0 }}>{typeLabel}</Tag>
-            <Text type="secondary" style={{ fontSize: 11 }}>{command}</Text>
-          </Space>
-          <Space size={4}>
-            <Tooltip title="刷新页面">
-              <Button size="small" icon={<ReloadOutlined />} onClick={() => { setIframeKey((k) => k + 1); setIframeError(false); setIframeLoading(true) }} />
-            </Tooltip>
-            {projectName && (
-              <Tooltip title="重启服务（配置变更后生效）">
-                <Button size="small" icon={<SyncOutlined />} loading={restarting} onClick={handleRestartPreview} />
-              </Tooltip>
-            )}
-            {projectName && (
-              <Tooltip title="环境变量">
-                <Button size="small" icon={<SettingOutlined />} onClick={() => setEnvDrawerOpen(true)} />
-              </Tooltip>
-            )}
-            <Tooltip title="新窗口打开">
-              <Button size="small" icon={<ExpandOutlined />} onClick={() => window.open(displayUrl, '_blank')} />
-            </Tooltip>
-            {projectName && (
-              <Tooltip title="停止预览">
-                <Button size="small" danger icon={<PoweroffOutlined />} onClick={handleStopPreview} />
-              </Tooltip>
-            )}
-          </Space>
-        </div>
-        {isBackendApi && (
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 4, marginBottom: 8,
-            background: isDark ? '#161b22' : '#f6f8fa',
-            borderRadius: 6, padding: '3px 4px',
-            border: `1px solid ${isDark ? '#30363d' : '#d0d7de'}`,
-          }}>
-            {API_PREVIEW_PATHS.map((item) => (
-              <div
-                key={item.key}
-                onClick={() => handleApiPathSwitch(item.key)}
-                style={{
-                  padding: '3px 10px',
-                  borderRadius: 4,
-                  fontSize: 12,
-                  cursor: 'pointer',
-                  fontWeight: apiPathKey === item.key ? 500 : 400,
-                  color: apiPathKey === item.key
-                    ? (isDark ? '#f0f6fc' : '#1f2328')
-                    : (isDark ? '#8b949e' : '#656d76'),
-                  background: apiPathKey === item.key
-                    ? (isDark ? '#30363d' : '#ffffff')
-                    : 'transparent',
-                  boxShadow: apiPathKey === item.key
-                    ? `0 1px 2px ${isDark ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.08)'}`
-                    : 'none',
-                  transition: 'all 0.15s',
-                }}
-              >
-                {item.label}
-              </div>
-            ))}
-          </div>
-        )}
+        {previewToolbar}
         <div style={{ flex: 1, position: 'relative', borderRadius: 6, overflow: 'hidden', border: `1px solid ${isDark ? '#30363d' : '#d0d7de'}` }}>
           {iframeLoading && (
             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: isDark ? '#0d1117' : '#fafafa', zIndex: 1 }}>
@@ -542,13 +650,7 @@ export default function PreviewPanel({ preview, isRunning, isDark, height = 400,
           <a href={displayUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: '#58a6ff' }}>{displayUrl}</a>
           {port > 0 && <Text type="secondary" style={{ fontSize: 10 }}>(端口 {port})</Text>}
         </div>
-        <EnvVarsDrawer
-          open={envDrawerOpen}
-          onClose={() => setEnvDrawerOpen(false)}
-          projectName={projectName}
-          isDark={isDark}
-          onSaveAndRestart={handleRestartPreview}
-        />
+        {envDrawer}
       </div>
     )
   }

@@ -1,0 +1,271 @@
+---
+description: Web 前端快速索引：组件树、Store 状态、API 服务层速查
+globs: web/**
+alwaysApply: false
+---
+
+# Web 前端快速索引
+
+## 目录结构（二层架构: Project → Task）
+
+```
+web/src/
+├── App.jsx                          # 根布局（welcome | workspace；挂载时调用 restoreSession）
+├── main.jsx                         # Vite 入口
+├── constants/
+│   └── modelPricing.js              # 模型单价表（findModelPrice / estimateCost / estimateCostDetailed）
+├── components/
+│   ├── WelcomePage.jsx              # 项目仪表盘首页（搜索 + Card 列表 + 批量删除选择模式；原欢迎页已重构）
+│   ├── code/
+│   │   └── MonacoEditor.jsx         # Monaco 编辑器（readOnly 可切换 + Diff 模式 + Ctrl+S 保存 + 全屏）
+│   ├── layout/
+│   │   ├── AppHeader.jsx            # 顶栏：Logo + 项目选择器 + 新建项目 + 设置/更多
+│   │   └── StatusBar.jsx            # 底栏：Agent 模型状态 + 当前 Phase + 连接状态
+│   ├── sidebar/
+│   │   ├── ProjectSidebar.jsx       # 侧边栏容器（RequirementInput + TaskList + TokenPanel 垂直堆叠）
+│   │   ├── RequirementInput.jsx     # 需求输入框 + 三模式选择器(完整/快捷/修复) + 高级参数面板
+│   │   ├── SessionControl.jsx       # 会话控制（暂停/恢复/停止按钮）
+│   │   ├── TaskList.jsx             # 任务列表（状态图标 + passes）
+│   │   └── TokenPanel.jsx           # Token 消耗汇总 + 任务进度 Progress 条
+│   ├── workspace/
+│   │   ├── helpers.js               # 工具函数：buildFileTree / formatTokenCount / analyzeFailure
+│   │   ├── OverviewTab.jsx          # 概览 Tab（4 状态自适应 + 需求 Markdown 渲染）
+│   │   ├── CodeTab.jsx              # 代码 Tab（文件树 + Monaco 编辑/预览切换 + 保存 + Diff）
+│   │   ├── RequirementHistoryTab.jsx # 需求历史 Tab（需求级归档 + 会话审计 + Markdown 渲染）
+│   │   ├── CostTab.jsx              # 成本 Tab（Agent 分布 + I/O 分离条 + 执行历史 + 模型估算）
+│   │   └── ProjectWorkspace.jsx     # 6-Tab 薄容器（概览/代码/预览/终端/历史/成本）
+│   ├── shared/
+│   │   ├── PreviewPanel.jsx         # 预览面板（iframe/CLI）
+│   │   ├── PhaseProgress.jsx        # Phase 进度指示条
+│   │   ├── SessionHeader.jsx        # 会话状态头部（项目名/状态标签/统计卡片 + actions prop 右上角操作按钮）
+│   │   ├── WebTerminal.jsx          # xterm.js 终端（WebSocket 连接 Docker 沙箱）
+│   │   ├── IterationTimeline.jsx    # 迭代时间线（内嵌于 HistoryTab）
+│   │   ├── IterationDetail.jsx      # 迭代详情（单步展开）
+│   │   ├── BugTracker.jsx           # Bug 追踪器（严重等级 + 修复按钮）
+│   │   └── SandboxPanel.jsx         # 沙箱管理与监控面板
+│   └── modals/
+│       ├── CreateProjectModal.jsx   # 新建/编辑项目弹窗（含模板选择器）
+│       ├── ImportPRDModal.jsx       # PRD 导入弹窗（拖拽上传/文本粘贴 → AI 解析）
+│       └── SettingsDrawer.jsx       # 设置抽屉（API 凭证 + 模型分配 + 沙箱管理）
+├── services/
+│   ├── api.js                       # REST 客户端（含沙箱 API + saveProjectFile）
+│   └── sse.js                       # SSE 连接（断线恢复，maxReconnects=5，最大重连延迟 3s）
+├── stores/
+│   ├── useStore.js                  # Zustand 主入口（State 声明 + UI Actions + Slice 组合 + HMR）
+│   ├── helpers/
+│   │   ├── constants.js             # EMPTY_STATS + buildResetState
+│   │   ├── taskUtils.js             # normalizeTaskId + findTask + validateSelectedProject
+│   │   └── eventProcessor.js        # 共享事件处理器（applyEvent — SSE 实时 & 历史回放共用）
+│   └── slices/
+│       ├── projectSlice.js          # 项目 CRUD（fetch/create/delete/edit/select）
+│       ├── executionSlice.js        # 执行控制（start/retry/stop/resume/quickFix/revise）
+│       ├── historySlice.js          # loadProjectHistory（DB 加载 + 事件回放 + 迭代构建）
+│       └── sseSlice.js              # _handleSSEEvent + _handleSSEDisconnect
+└── styles/
+    ├── global.css                   # 全局样式（含 .requirement-markdown Markdown 渲染样式）
+    └── theme.js                     # Ant Design token 主题（dark/light）
+```
+
+## Zustand Store (`useStore.js`) 关键状态
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `projects` | `[]` | 所有项目列表 |
+| `selectedProjectName` | `string\|null` | 当前选中项目名（localStorage 持久化） |
+| `viewMode` | `'welcome'\|'workspace'` | 当前视图（localStorage 持久化） |
+| `activeTab` | `'overview'\|'code'\|'preview'\|'terminal'\|'history'\|'cost'` | 工作台当前 Tab（localStorage 持久化） |
+| `sessionId` | `string\|null` | 当前 SSE 会话 ID |
+| `isRunning` | `boolean` | 是否正在执行 |
+| `currentPhase` | `string` | 当前执行阶段名 |
+| `currentIteration` | `object` | 迭代信息 `{round, maxRounds, iteration, maxIterations}` |
+| `iterationHistory` | `[]` | 历次迭代记录 `[{phase, iteration, success, tokensUsed, elapsedSeconds, error, storyTitle}]` |
+| `executionLogs` | `[]` | 实时日志列表 |
+| `executionHistory` | `[]` | 执行历史会话列表 |
+| `executionTaskList` | `[]` | 任务列表（含 status, passes, feature_tag, files, verification_steps） |
+| `executionStats` | `object` | 统计：`{tasks, tests, bugs, files, tokens, elapsed}` |
+| `executionTokenRuns` | `[]` | 历次执行 token 记录 `[{total_tokens, prompt_tokens, completion_tokens, elapsed_seconds, success, timestamp, agent_tokens}]` |
+| `executionAgentTokens` | `object\|null` | Agent 级 token 分布 `{pm, dev, test, _prompt_tokens, _completion_tokens}` |
+| `executionBugsList` | `[]` | Bug 详情列表（供 quick-fix 使用） |
+| `executionPreview` | `object\|null` | 预览 URL 信息 |
+| `executionRefinerResult` | `object\|null` | 需求分析结果 `{quality, enhanced, warning}` |
+| `executionFiles` | `[]` | 工作区文件路径列表（执行中动态追加） |
+| `newlyCreatedFiles` | `[]` | 新建文件列表（CodeTab NEW 标记） |
+| `sandboxStatus` | `object` | 沙箱状态 `{step, message, progress, ready}` |
+| `executionFailure` | `object\|null` | 失败信息 `{reason, suggestions[]}` |
+| `theme` | `'dark'\|'light'` | 主题（localStorage 持久化） |
+| `collapsedSections` | `object` | UI 折叠状态 `{[sectionKey]: boolean}`（localStorage 持久化） |
+
+### Store 关键 Action
+
+| Action | 说明 |
+|--------|------|
+| `selectProject(name)` | 选中项目并写入 localStorage |
+| `deleteProject(name)` | 删除项目，同时清理 localStorage（若为当前项目） |
+| `batchDeleteProjects(names)` | 批量删除项目，刷新列表并清理 localStorage；返回 `{ deleted, skipped, failed }` |
+| `restoreSession()` | App 挂载时从 localStorage 恢复 selectedProjectName + viewMode |
+| `backToAllProjects()` | 返回仪表盘首页并清除 localStorage 项目选中状态 |
+| `setRunMode(mode)` | 切换运行模式：`full` \| `quick` \| `fix` |
+| `setRunAdvanced(opts)` | 设置高级运行参数（max_rounds/max_iterations/resume/clean/no_parallel/verbose） |
+| `setImportPRDOpen(open)` | 打开/关闭 PRD 导入弹窗 |
+| `isSectionCollapsed(key, default)` | 读取 section 折叠状态（带默认值） |
+| `toggleSectionCollapsed(key)` | 切换 section 折叠/展开 |
+| `setSectionCollapsed(key, value)` | 显式设置 section 折叠状态 |
+
+## API 服务层函数 (`services/api.js`)
+
+```js
+// BASE = '/api/v1'（所有请求统一走 v1 前缀）
+
+// 项目
+fetchProjects()                          // GET /api/v1/projects?detail=true
+fetchProject(name)                       // GET /api/v1/projects/:name
+createProject(data)                      // POST /api/v1/projects
+updateProject(name, data)                // PATCH /api/v1/projects/:name
+deleteProject(name)                      // DELETE /api/v1/projects/:name
+batchDeleteProjects(names)               // POST /api/v1/projects/batch-delete（Body: { names }）
+pauseProject(name)                       // POST /api/v1/projects/:name/pause
+resumeProject(name)                      // POST /api/v1/projects/:name/resume
+
+// 项目操作（二层架构: 不再有 requirement ID）
+retest(projectName)                      // POST /api/v1/projects/:name/retest
+quickFixBugs(projectName, opts)          // POST /api/v1/projects/:name/quick-fix
+reviseProject(projectName, opts)         // POST /api/v1/projects/:name/revise
+
+// 文件读写
+fetchFile(sessionId, path)               // GET /api/v1/file/:id?path=...
+fetchProjectFile(projectName, path)      // GET /api/v1/projects/:name/file?path=...
+saveProjectFile(projectName, path, content) // PUT /api/v1/projects/:name/file（Body: {path, content}）
+
+// 会话
+fetchSessions()                          // GET /api/v1/sessions
+fetchSessionEvents(sessionId)            // GET /api/v1/sessions/:id/events
+clearSessions(onlyFinished)              // DELETE /api/v1/sessions
+deleteSession(sessionId)                 // DELETE /api/v1/sessions/:id
+startRun(data)                           // POST /api/v1/run
+stopRun(sessionId)                       // POST /api/v1/stop/:id
+
+// 配置
+fetchConfig()                            // GET /api/v1/config
+fetchProviders()                         // GET /api/v1/providers
+fetchModelConfig()                       // GET /api/v1/model-config
+saveModelConfig(data)                    // PUT /api/v1/model-config
+testModel(data)                          // POST /api/v1/test-model
+
+// 沙箱管理
+fetchSandboxStatus()                     // GET /api/v1/sandbox/status
+stopSandbox(name)                        // POST /api/v1/sandbox/:name/stop
+
+// 快捷/修复模式
+quickRun(data)                           // POST /api/v1/quick
+fixRun(data)                             // POST /api/v1/fix
+
+// 模板管理
+fetchTemplates()                         // GET /api/v1/templates
+exportTemplate(data)                     // POST /api/v1/templates
+
+// 项目工具
+deployProject(projectName, opts)         // POST /api/v1/projects/:name/deploy
+generateDocs(projectName)                // POST /api/v1/projects/:name/docs
+fetchInsights(requirement?)              // GET /api/v1/insights
+
+// PRD 导入
+importPRD({content, filename, project_name})  // POST /api/v1/import-prd
+
+// 里程碑
+addMilestone(projectName, opts)          // POST /api/v1/projects/:name/milestone
+```
+
+## SSE 事件处理（Slice 架构）
+
+事件处理分两层：**共享层**（`helpers/eventProcessor.js` — `applyEvent()`）和 **SSE 专有层**（`slices/sseSlice.js`）。
+
+**共享层**（`applyEvent` — SSE 实时 + 历史回放共用）：
+- `sandbox_preparing` / `sandbox_ready` → `sandboxStatus`
+- `pm_analyzing` / `pm_progress` → `currentPhase` + `pmProgress`
+- `phase_start` / `plan_ready` → `currentPhase` + `executionPlan` + `executionTaskList`
+- `task_start` / `task_complete` / `task_verified` → `executionTaskList` + `executionStats.tasks`
+- `file_created` → `executionFiles` + `executionStats.files`
+- `test_result` → `executionStats.tests` + `executionBugsList`
+- `summary` → `executionSummary` + `executionStats`
+- `token_session` → `executionAgentTokens`
+- `preview_ready` / `execution_failed` / `error` / `done`（部分）
+
+**SSE 专有层**（`sseSlice._handleSSEEvent` — 仅实时处理）：
+- `plan_ready` 追加：清除 `pmProgress`、更新 `projects.tech_stack`
+- `iteration_start` / `iteration_done` → `iterationHistory` + `currentIteration`
+- `resume_start` / `quick_fix_start` / `revise_start` → `fixProgress` 初始化
+- `bug_fix_progress` / `bug_fix_done` / `quick_fix_done` → `fixProgress` 更新
+- `token_session` 追加：`executionTokenRuns` + history entries
+- `file_created` 追加：`newlyCreatedFiles`
+- `refiner_quality` / `refiner_enhanced` / `refiner_warning` → `executionRefinerResult`
+- `done` → 完整生命周期（close SSE、cleanup、stats、history、fetchProjects）
+- `thinking_content` → `agentThinking`
+
+## 模型单价工具（`constants/modelPricing.js`）
+
+```js
+MODEL_PRICES                    // 主流模型单价表（OpenAI/Anthropic/DeepSeek/GLM/Qwen 等）
+findModelPrice(modelName)       // 模糊匹配模型名，返回 {input, output, currency, free?, note?}
+estimateCost(tokens, price)     // 按均价估算（输入输出各半）
+estimateCostDetailed(promptTokens, completionTokens, price)  // 精确估算
+```
+
+## 错误排查速查
+
+### SSE / 实时连接
+
+| 症状 | 排查入口 | 说明 |
+|------|---------|------|
+| 执行中页面无更新 | `services/sse.js` → `eventSource.onmessage` | 检查 SSE 连接是否建立；JSON 解析错误会静默忽略 |
+| "与后端的连接中断" | `services/sse.js` → `_recoverFromHistory()` | 3 次重连失败后触发 `onError`，检查后端是否存活 |
+| SSE 事件丢失 | `services/sse.js` → `_recoverFromHistory()` | 重连时从 `/api/sessions/{id}/events` 回放，检查 `_eventCount` 偏移 |
+| 执行结束但状态未更新 | `stores/slices/sseSlice.js` → `_handleSSEEvent('done')` | 检查 `done` 事件是否正确触发 `isRunning=false` + 刷新项目列表 |
+
+### 组件 UI
+
+| 症状 | 排查入口 | 说明 |
+|------|---------|------|
+| 代码编辑器空白 | `components/code/MonacoEditor.jsx` | 检查 `fetchProjectFile()` 返回 + 文件路径是否正确 |
+| 文件保存失败 | `components/workspace/CodeTab.jsx` | `saveProjectFile()` → `api.js` → 检查路径越界 / 禁止写入内部文件 |
+| 预览面板加载失败 | `components/shared/PreviewPanel.jsx` | 检查 `iframeError` 状态 + `executionPreview.url` 是否有效 |
+| 终端连不上 | `components/shared/WebTerminal.jsx` | WebSocket 8s 超时；检查 Docker 容器状态；自动降级到本地终端 |
+| Bug 修复按钮无反应 | `components/shared/BugTracker.jsx` | `quickFixBugs()` 需要 `executionBugsList` 非空 |
+| 任务列表不更新 | `stores/helpers/eventProcessor.js` → `applyEvent` | 检查 `plan_ready` / `task_start` / `task_complete` 事件处理 |
+| 项目卡片操作报错 | `components/WelcomePage.jsx` | `try-catch` + `message.error`；批量删除检查 `failed` 计数 |
+| 设置保存失败 | `components/modals/SettingsDrawer.jsx` | `saveModelConfig()` → 检查 API Key 格式 + `message.error` |
+
+### 数据流 / 状态
+
+| 症状 | 排查入口 | 说明 |
+|------|---------|------|
+| 刷新页面状态丢失 | `stores/useStore.js` + HMR restore | 恢复 `selectedProjectName` + `viewMode` + `collapsedSections`，执行状态不持久化 |
+| Token 统计为 0 | `stores/slices/sseSlice.js` → `token_session` 分支 | 检查 `token_session` 事件是否到达 + `executionAgentTokens` 更新 |
+| 成本估算不准 | `constants/modelPricing.js` → `findModelPrice()` | 模糊匹配，新模型可能未收录 |
+| 项目列表为空 | `stores/slices/projectSlice.js` → `fetchProjects()` | `catch` 静默返回空数组，检查后端 `/api/v1/projects` 是否正常 |
+| 历史会话缺失 | `stores/slices/historySlice.js` → `loadProjectHistory()` | 检查 `fetchSessions()` + `fetchSessionEvents()` |
+
+### 错误处理模式
+
+- **静默失败**（`.catch(() => {})`）：`ProjectWorkspace.fetchProject` / `HistoryTab.deleteSession` / `stopExecution` — 这些点的错误不会通知用户
+- **用户提示**（`message.error`）：文件保存 / 项目创建删除 / AI 辅助功能 / 设置保存
+- **状态驱动**：`executionFailure` → `OverviewTab` + `SessionHeader` 显示错误原因 + 恢复建议
+- **自动恢复**：SSE 自动重连（3 次）/ WebTerminal Docker→本地降级 / PreviewPanel 重试按钮
+
+## UI 状态持久化
+
+**用户在界面上的操作状态必须跨刷新保持**。折叠、展开、选中、排序偏好等 UI 状态，刷新页面后必须恢复。
+
+统一使用 `useStore` 中的 `collapsedSections` 体系，**禁止用 `useState` 管理可持久化的 UI 状态**。
+
+| API | 用途 |
+|-----|------|
+| `isSectionCollapsed(key, defaultValue)` | 读取某 section 是否折叠（带默认值） |
+| `toggleSectionCollapsed(key)` | 切换折叠状态 |
+| `setSectionCollapsed(key, value)` | 显式设置折叠状态 |
+
+sectionKey 格式：`{组件区域}-{语义}-{唯一标识}`（如 `overview-target`、`overview-version-1.0.0`、`history-session-{id}`）。
+
+**禁止事项**：
+- 禁止用 `useState` 管理折叠/展开（纯运行时瞬态除外，如日志工具调用展开）
+- 禁止用 Ant Design Collapse 的 `defaultActiveKey`，必须用 `activeKey` + `onChange` 受控模式
+- 禁止硬编码默认展开/折叠，必须先读取 store 持久化值

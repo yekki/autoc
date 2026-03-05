@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { Button, Space, Tag, Typography, Spin, Result, Tooltip, Alert } from 'antd'
 import {
   GlobalOutlined, CodeOutlined, ReloadOutlined, ExpandOutlined,
@@ -36,6 +36,14 @@ export default function PreviewTab() {
   const [iframeLoading, setIframeLoading] = useState(true)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const containerRef = useRef(null)
+
+  // preview_ready 触发新预览时自动刷新 iframe，避免浏览器缓存旧内容
+  useEffect(() => {
+    if (!preview?.url) return
+    setIframeKey((k) => k + 1)
+    setIframeError(false)
+    setIframeLoading(true)
+  }, [preview])
 
   const handleIframeLoad = useCallback(() => {
     setIframeLoading(false)
@@ -138,7 +146,7 @@ export default function PreviewTab() {
           ) : (
             <iframe
               key={iframeKey}
-              src={url}
+              src={`${url}${url.includes('?') ? '&' : '?'}_t=${iframeKey}`}
               title="Project Preview"
               style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"

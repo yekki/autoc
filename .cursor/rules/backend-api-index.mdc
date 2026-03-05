@@ -1,0 +1,192 @@
+---
+description: 后端快速索引：FastAPI 路由表、核心类方法、数据模型速查
+globs:
+  - "autoc/server/**"
+  - "autoc/server.py"
+alwaysApply: false
+---
+
+# 后端快速索引
+
+## FastAPI 路由表 (`autoc/server.py`)
+
+```
+GET  /                                                  # 前端 SPA HTML
+
+# === API v1（所有业务路由挂载在 /api/v1 下）===
+GET  /api/v1/config                                     # 系统配置
+GET  /api/v1/providers                                  # LLM Provider 列表
+GET  /api/v1/model-config                               # 各 Agent 模型配置
+PUT  /api/v1/model-config                               # 保存模型配置
+POST /api/v1/test-model                                 # 测试模型连通性
+GET  /api/v1/settings                                   # 全局设置
+PUT  /api/v1/settings                                   # 更新设置
+
+GET  /api/v1/projects                                   # 项目列表（?detail=true 含需求）
+GET  /api/v1/projects/{project_name}                    # 项目详情（含需求+任务）
+POST /api/v1/projects                                   # 新建项目
+PATCH /api/v1/projects/{project_name}                   # 更新项目（名称/描述/标签）
+DELETE /api/v1/projects/{project_name}                  # 删除项目
+POST /api/v1/projects/batch-delete                      # 批量删除项目（Body: { names[], keep_files?, force? }，返回 { deleted, skipped, failed }）
+POST /api/v1/projects/{project_name}/pause              # 暂停项目
+POST /api/v1/projects/{project_name}/resume             # 恢复项目
+POST /api/v1/projects/{project_name}/milestone          # 记录里程碑
+POST /api/v1/projects/{project_name}/retest             # 重测项目
+POST /api/v1/projects/{project_name}/quick-fix          # 快速修复 bug
+POST /api/v1/projects/{project_name}/revise             # 调整需求并重新执行
+
+GET  /api/v1/project/status                             # 当前活跃项目状态
+
+GET  /api/v1/sessions                                   # 会话列表
+DELETE /api/v1/sessions                                 # 清空会话
+DELETE /api/v1/sessions/{session_id}                    # 删除单个会话
+GET  /api/v1/sessions/{session_id}/events               # 历史 SSE 事件回放
+
+POST /api/v1/refine                                     # 需求智能优化
+POST /api/v1/refine/merge                               # 合并优化后需求
+POST /api/v1/run                                        # 启动执行（返回 session_id）
+POST /api/v1/stop/{session_id}                          # 停止执行
+
+GET  /api/v1/events/{session_id}                        # SSE 实时事件流
+GET  /api/v1/file/{session_id}?path=...                 # 读取工作区文件
+GET  /api/v1/projects/{project_name}/file?path=...      # 通过项目名读取文件
+PUT  /api/v1/projects/{project_name}/file               # 写入项目文件（Body: {path, content}，路径越界自动拒绝，禁止写 AutoC 内部文件）
+GET  /api/v1/preview/{session_id}                       # 获取预览 URL
+POST /api/v1/preview/{session_id}/stop                  # 停止预览服务
+
+GET  /api/v1/sandbox/status                             # Docker 可用性 + 所有 autoc-sandbox 容器列表
+POST /api/v1/sandbox/{name}/stop                        # 停止指定沙箱容器
+
+WS   /api/v1/terminal/{project_name}                    # 终端 WebSocket — Docker 沙箱 Shell（强制沙箱模式）
+
+# === 工具路由（v3.5 新增）===
+GET  /api/v1/templates                                  # 列出所有模板（内置+导出）
+POST /api/v1/templates                                  # 导出项目为模板
+POST /api/v1/import-prd                                 # PRD 文档导入并创建项目
+POST /api/v1/quick                                      # 快捷模式（跳过 Planning 直接开发）
+POST /api/v1/fix                                        # 修复模式（定向修 Bug）
+POST /api/v1/projects/{project_name}/deploy             # 生成部署文件（Docker/Vercel/Railway）
+POST /api/v1/projects/{project_name}/docs               # 自动生成项目文档
+GET  /api/v1/insights                                   # 历史经验洞察（?requirement=关键词筛选）
+GET  /api/v1/capabilities                               # 系统能力概览（工具数/MCP/Docker/健康度）
+
+# === 向后兼容（旧版 /api/xxx 自动 307 重定向到 /api/v1/xxx）===
+ALL  /api/{path:path}                                   # 兼容层重定向
+```
+
+## 核心类速查
+
+### `Orchestrator` (`autoc/core/orchestrator/facade.py`)
+主编排器 Facade，CLI 和 Web 共用。实际逻辑分散在 `orchestrator/` 子模块。
+- `run(requirement, resume, clean, incremental, max_iterations, tech_stack)` — 完整执行流水线
+- `retest(task_ids)` — 跳过 Planning/Dev 直接重跑测试
+- `quick_fix_bugs(bug_ids, bug_titles, bugs_data)` — 快速修复指定 bug
+- `revise_project(new_description, clean_workspace)` — 调整需求并重新开始
+- `assess_complexity(requirement)` → `'simple'|'medium'|'complex'`（静态方法）
+- `cleanup()` — 清理 MCP/沙箱资源
+- `total_tokens` — 属性，总 Token 消耗
+
+调度委托：`scheduler.py`（`refine_requirement` / `run_planning_phase` / `run_dev_and_test`）
+操作委托：`scheduler_ops.py`（`execute_quick_fix` / `execute_retest` / `execute_revise`）
+
+### `IterativeLoop` (`autoc/core/orchestrator/loop.py`)
+Plan → Dev → Test → Fix 循环引擎，由 4 个 Mixin 组合。
+- `run(max_iterations)` → `LoopResult` — 主循环
+- `_determine_phase(prd)` — 根据状态决定下一阶段
+- Mixin: `_ExecMixin`(loop_exec) + `_FixMixin`(loop_fix) + `_ReviewMixin`(loop_review) + `_SupportMixin`(loop_support)
+
+### `BaseAgent` (`autoc/agents/base.py`)
+ReAct 循环基类，PlanningAgent/CodeActAgent/CritiqueAgent 均继承。
+- `run(task_prompt)` — ReAct 主循环（reasoning + tool calling）
+- `clone()` — 并行安全克隆（独立对话历史）
+- Mixin: `_RunnerMixin`(agent_runner) + `_ToolHandlersMixin`(tool_handlers) + `_ContextCompressMixin`(context_compress) + `_SAICMixin`(saic)
+
+### `ProjectManager` (`autoc/core/project/manager.py`)
+项目元数据管理（CRUD + 会话记录）。
+- `init/load/save/delete` — 基本 CRUD
+- `record_session(...)` — 记录执行会话
+- `list_all_projects(workspace_root)` — 静态方法，列出所有项目
+- `find_project_by_name(name, workspace_root)` — 静态方法，按名查找项目路径
+
+### `StateManager` (`autoc/core/project/state.py`)
+文件级状态管理（PRD、进度、Guardrails）。
+- `load_prd() / save_prd()` — PRDState 读写
+- `import_from_tasks(tasks_data, ...)` — 从任务列表导入 PRDState
+- `archive_run()` — 归档当前运行状态
+
+## 数据模型 (`autoc/core/project/models.py`)
+
+| 类 | 关键字段 |
+|----|---------|
+| `ProjectMetadata` | `name, description, status, tech_stack, req_count, created_at` |
+| `Task` | `id, title, files, verification_steps, status, passes, feature_tag` |
+| `ProjectPlan` | `tasks[], tech_stack, project_type, interface_spec` |
+| `BugReport` | `task_id, description, root_cause, fix_strategy, affected_functions` |
+| `TestResult` | `passed, total, failures[], coverage` |
+| `RefinedRequirement` | `original, refined, quality_score, suggestions` |
+| `QualityScore` | `score, dimensions, suggestions` |
+
+### 状态枚举
+
+```python
+# ProjectStatus
+IDLE → PLANNING → DEVELOPING → TESTING → COMPLETED / INCOMPLETE / PAUSED / ARCHIVED
+
+# TaskStatus
+PENDING → IN_PROGRESS → COMPLETED / FAILED / BLOCKED
+```
+
+## 存储
+
+- `autoc.db` — 项目级 SQLite（每个项目独立）：projects / requirements / tasks / milestones
+- `.autoc.db` — 全局 SQLite：run_sessions / session_events / experience / fix_trajectories
+- `autoc/core/infra/db.py` — `ProjectDB` / `GlobalDB`（WAL 模式 + 写锁）
+- `autoc/core/project/state.py` — `StateManager` 文件级状态（`.autoc/` 目录）
+- `autoc/core/project/progress.py` — `ProgressTracker` 文本级进度（`autoc-progress.txt`）
+
+## 服务层 → 核心层调用关系
+
+| 路由文件 | 调用的核心类/方法 |
+|---------|-----------------|
+| `routes_execution.py` → `run_project()` | `build_orchestrator()` → `Orchestrator.run()` |
+| `routes_execution.py` → `refine_requirement()` | `RequirementRefiner.assess_quality()` / `refine()` |
+| `routes_execution.py` → `stop_session()` | `sessions[id].stop_requested = True` |
+| `routes_projects.py` → `retest_api()` | `Orchestrator.retest()` |
+| `routes_projects.py` → `quick_fix_bugs_api()` | `Orchestrator.quick_fix_bugs()` |
+| `routes_projects.py` → `revise_project_api()` | `Orchestrator.revise_project()` |
+| `routes_projects.py` → CRUD | `ProjectManager.init/load/save/delete` |
+| `routes_tools.py` → `import_prd_api()` | `prd_import.import_prd()` → `ProjectManager.init()` |
+| `routes_tools.py` → `quick_mode_api()` | `Orchestrator.run()`（跳过 PM） |
+| `routes_tools.py` → `fix_mode_api()` | `Orchestrator.quick_fix_bugs()` |
+| `routes_config.py` → 模型配置 | `ModelConfigManager` 全套方法 |
+| `routes_preview.py` → 沙箱 | `docker` CLI（`is_available` / `rm -f`） |
+| `routes_terminal.py` → WebSocket | `docker exec -it`（PTY 双向管道） |
+
+## 错误排查速查
+
+| 症状 | 排查入口 |
+|------|---------|
+| API 返回 500 | `routes_*.py` → 对应 handler 的 `try-except`；检查 `build_orchestrator()` 参数 |
+| 执行启动失败 | `routes_execution.py` → `run_project()` → `build_orchestrator()` → 检查 `ModelConfigManager` 配置 |
+| SSE 连接中断 | `routes_execution.py` → `stream_events()` — 检查 `EventSourceResponse` + 事件队列 |
+| 项目找不到 | `routes_projects.py` → `ProjectManager.find_project_by_name()` — 检查 `workspace/` 目录 |
+| 文件读写越界 | `routes_execution.py` → `get_file()` / `routes_projects.py` → `write_project_file()` |
+| WebSocket 终端连不上 | `routes_terminal.py` — 检查 Docker 容器状态 + PTY 创建 |
+| 模型测试失败 | `routes_config.py` → `test_model_api()` → `llm/model_config.py` → `test_model_connection()` |
+| 会话列表不准 | `routes_config.py` → `list_sessions()` — 合并 registry + 内存，检查 `is_expired()` |
+| 预览 URL 获取失败 | `routes_preview.py` → `get_preview_info()` — 从历史事件查找 `preview_ready` |
+| 沙箱状态异常 | `routes_preview.py` → `sandbox_status()` — 检查 Docker daemon + `autoc-sandbox` 容器 |
+
+## 插拔式技术栈适配器 (`autoc/stacks/`)
+
+`_registry.py` 自动发现并注册所有 `StackAdapter` 子类，提供以下统一 API：
+
+```python
+detect_stack(workspace_dir)          # 返回匹配的适配器实例
+parse_project_context(workspace_dir) # 返回 ProjectContext
+get_developer_guidelines(stack)      # 技术栈专属 Developer 指南
+get_tester_guidelines(stack)         # 技术栈专属 Tester 指南
+get_all_complexity_indicators()      # 合并所有栈的复杂度特征词
+```
+
+已内置适配器：`node` / `python` / `go` / `rust` / `java` / `dotnet` / `ruby` / `php` / `cpp` / `swift` / `static_html`

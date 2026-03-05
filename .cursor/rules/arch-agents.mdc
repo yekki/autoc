@@ -1,0 +1,122 @@
+---
+description: AutoC Agent 架构模式与修改指引，编辑 autoc/agents/ 时自动加载
+globs: autoc/agents/**/*.py
+alwaysApply: false
+---
+
+# Agent 架构模式
+
+## BaseAgent（`base.py`）
+
+- **ReAct 循环**：Reasoning + Acting，通过 function calling 调用工具
+- **ToolRegistry 分发**：`register_handler(name, handler, category, desc)` 注册，`dispatch()` 统一路由
+- **工具输出必须 `rich.markup.escape()`** 后打印，否则含 `{` 的 JSON 触发 Rich 格式错误
+- **`clone()`**：并行任务时用 `developer.clone()` 获得独立对话历史，避免多线程竞争
+- **上下文压缩**：`_compress_history()` 避免 token 超限；`_validate_json_output()` 去幻觉
+
+## PlanningAgent（`planner.py`）
+
+需求分析与任务规划 Agent（单次 LLM 调用 + 纯代码验证，不走 ReAct 循环）：
+
+- **计划质量关卡**：`_validate_plan()` 校验 task 须有 files + verification_steps + 非自言自语描述 + 水平切片反模式检测，不合格单次 LLM 重试
+- **UI 浏览器验证注入**：检测到 html/css/jsx/tsx/vue 文件时，自动为 verification_steps 注入"在浏览器中验证"
+- **垂直切片原则**：每个任务是端到端的功能切片（数据+逻辑+UI），完成后可独立运行验证；禁止按技术层水平拆分
+- **增量 Task ID**：从已有任务最大编号递增；`_renumber_conflicting_tasks()` 防冲突
+- **工作区信息过滤**：注入 prompt 时过滤 `autoc.db` / `autoc-progress.txt` 等内部文件
+
+## CodeActAgent（`code_act_agent.py`）
+
+编码+验证+修复一体化 Agent（ReAct 循环，与 OpenHands CodeActAgent 同模式）：
+
+- **环境感知**：system prompt 注入工作区规则（相对路径、禁止绝对路径）
+- **空产出检测**：执行后 `_changed_files` 为空则标记 FAILED
+- **动态调试 + 策略建议**：按 `fix_attempts` 提供渐进式修复建议（非强制指令），Agent 根据错误根因自主决定修复方式
+- **Bug 验证闭环**：`fix_bugs()` 标记为 `pending_verification`，需 `_quick_verify()` 确认后才标记 `fixed`
+- **关联 Bug 分组**：`_group_related_bugs()` 按 `file_path` 分组，同文件 Bug 共享对话上下文
+- **`submit_test_report` 工具**：通过 tool call 提交结构化报告数据
+
+## CritiqueAgent（`critique.py`）— 可选，默认关闭
+
+代码级质量评审 Agent（参考 OpenHands Iterative Refinement），需在 Web UI 设置中手动启用：
+
+- **4 维评分**：correctness / quality / completeness / best_practices，各 25 分满分 100
+- **及格线**：总分 >= 85 为通过；任何维度 < 10 强制不通过
+- **代码级 issues**：精确到文件和行号，含 severity / dimension / suggestion
+- **工具**：read_file + list_files + search_in_files + execute_command + submit_critique
+- **review_task()**：评审单个任务；**review_project()**：聚合多任务评审
+- 在 `loop_review.py` 的 `_execute_pm_review()` 中调用，替代旧的文本匹配验收
+- Critique issues 注入到 guardrails.md，CodeActAgent 下轮修复时可读取
+
+## 修改指引
+
+### Agent 行为
+
+| 目标 | 修改位置 |
+|------|---------|
+| 修改 Agent 系统提示词 | 对应文件的 `get_system_prompt()` |
+| 添加/修改内置工具 | `base.py` → `_register_builtin_tools()` + `tool_handlers.py` → `_ToolHandlersMixin` |
+| 修改 ReAct 循环逻辑 | `agent_runner.py` → `_RunnerMixin.run()` |
+| 修改上下文压缩 | `context_compress.py` → `_compress_history()` |
+| 修改 SAIC 四层提醒 | `saic.py` → `_SAICMixin._check_progress()` / `_build_forced_output_nudge()` |
+| 修改工具调用阶段追踪 | `saic.py` → `_track_tool_call()` |
+| 修改 JSON 输出校验 | `context_compress.py` → `_validate_json_output()` |
+
+### PlanningAgent
+
+| 目标 | 修改位置 |
+|------|---------|
+| 修改需求分析流程 | `planner.py` → `analyze_and_plan()` |
+| 修改计划质量关卡 | `planner.py` → `_validate_plan()` |
+| 修改计划解析 | `planner.py` → `_parse_plan()` |
+| 修改增量规划 | `planner.py` → `plan_next_batch()` / `review_and_adjust()` |
+
+### CodeActAgent
+
+| 目标 | 修改位置 |
+|------|---------|
+| 修改任务实现+验证逻辑 | `code_act_agent.py` → `execute_plan()` |
+| 修改 Bug 修复策略切换 | `code_act_agent.py` → `fix_bugs()` |
+| 修改报告解析 | `code_act_agent.py` → `_parse_plan_report_from_output()` |
+| 修改工具化报告提交 | `code_act_agent.py` → `submit_test_report` 工具 |
+
+### Critique Agent
+
+| 目标 | 修改位置 |
+|------|---------|
+| 修改评审维度/评分标准 | `critique.py` → `CRITIQUE_DIMENSIONS` / `PASS_THRESHOLD` |
+| 修改评审 prompt | `critique.py` → `get_system_prompt()` / `_build_review_prompt()` |
+| 修改及格线规则 | `critique.py` → `review_task()` 中的 `any_dim_critical` 判断 |
+| 修改项目级聚合评审 | `critique.py` → `review_project()` |
+| 修改评审结果注入修复上下文 | `loop_review.py` → `_inject_critique_issues_for_fix()` |
+| 修改 Critique 触发时机 | `loop_review.py` → `_execute_pm_review()` |
+
+## 错误排查速查
+
+| 症状 | 排查入口 | 说明 |
+|------|---------|------|
+| Agent 工具调用连续失败 | `base.py` → `_consecutive_errors` | 连续 5 次触发熔断器，检查 `_FATAL_ERROR_KEYWORDS` |
+| Agent 输出为空/不执行 | `saic.py` → `_check_progress()` | 检查 SAIC 四层机制是否过早剥离工具 |
+| Agent 迭代耗尽无产出 | `agent_runner.py` → `run()` | 检查 `max_iterations` + 压缩后是否丢失关键历史 |
+| Planning 计划质量不达标 | `planning/validator.py` → `validate_plan()` | L1 结构→L2 规约→L3 架构→L4 自动补全，逐级检查 |
+| Planning 计划 JSON 解析失败 | `planning/validator.py` → `parse_plan()` | 多策略解析，最后 `_retry_plan()` 重试 |
+| Planning 水平切片警告 | `planning/validator.py` → `validate_plan()` L3 | 检查 task 是否端到端功能切片 |
+| CodeActAgent 任务空产出 | `code_act_agent.py` → `execute_plan()` | `_changed_files` 为空 → FAILED |
+| CodeActAgent 阻塞不前 | `code_act_agent.py` → `execute_plan()` | 输出含 `[BLOCKED]` → 需要人工介入 |
+| CodeActAgent 修复策略无效 | `code_act_agent.py` → `fix_bugs()` | 按 `fix_attempts` 提供建议（非强制），检查 Agent 是否在重复无效操作 |
+| Critique 评审不触发 | `loop_review.py` → `_execute_pm_review()` | 检查 `self.orc.critique` 是否为 None |
+| Critique 评分异常 | `critique.py` → `review_task()` | 检查 `_submitted_critique` 是否被正确提交 |
+| Critique issues 未注入 | `loop_review.py` → `_inject_critique_issues_for_fix()` | 检查 guardrails.md 是否写入成功 |
+| 上下文超限被截断 | `context_compress.py` | 检查 `context_limit` + 压缩保留策略（最近 4 条） |
+| Agent 间状态不同步 | `project/memory.py` → `SharedMemory` | 检查 `to_context_string(role)` 裁剪是否过度 |
+
+## 注意事项
+
+- Agent 角色：PlanningAgent（规划）+ CodeActAgent（编码+验证+修复）+ CritiqueAgent（可选评审，默认关闭）
+- PlanningAgent 不走 ReAct 循环，仅 1 次 LLM 调用 + 纯代码验证
+- Agent 通过 `SharedMemory` 共享状态；`to_context_string(agent_role)` 按角色裁剪减少 token
+- 反思机制：连续 2 轮失败后 LLM 分析根因，策略注入下一轮修复 prompt
+- 修复轨迹记录在 `fix_trajectories` 表，供历史检索
+- AGENTS.md 自动发现：每次迭代后从 Agent 输出提取 PATTERN/GUARDRAIL/LEARNING 追加到工作区
+- **Mixin 继承链**：`BaseAgent` ← `_RunnerMixin` + `_ToolHandlersMixin` + `_ContextCompressMixin` + `_SAICMixin`
+- **工具结果延迟截断**：`_MAX_TOOL_RESULT_CHARS` 基于 `context_limit` 动态计算（25% × 4 char/token，下限 8000 上限 30000），当前迭代完整保留，下一迭代开始前截断（`_truncate_prev_tool_results()`）；错误信息不截断
+- **clone() 用途**：并行任务时用 `agent.clone()` 获得独立对话历史，避免多线程竞争
